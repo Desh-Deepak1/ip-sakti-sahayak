@@ -1,0 +1,7 @@
+{
+  "source": ".",
+  "name": "ip-sakti-backend",
+  "type": "python",
+  "stack": "python312",
+  "command": "sh -c 'uvicorn app.main:app --host 0.0.0.0 --port ${X_ZOHO_CATALYST_LISTEN_PORT}'"
+}
