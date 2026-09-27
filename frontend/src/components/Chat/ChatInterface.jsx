@@ -40,7 +40,7 @@ export default function ChatInterface() {
       const { data: { session: currentSession } } = await supabase.auth.getSession();
       if (!currentSession?.access_token) return;
 
-      const response = await fetch('http://127.0.0.1:8000/api/v1/history', {
+      const response = await fetch('https://sahayak-ai-xkx9.onrender.com/api/v1/history', {
         method: 'GET',
         headers: { 'Authorization': `Bearer ${currentSession.access_token}` }
       });
@@ -119,7 +119,7 @@ export default function ChatInterface() {
       const { data: { session: currentSession } } = await supabase.auth.getSession();
       const token = currentSession?.access_token;
 
-      const response = await fetch('http://127.0.0.1:8000/api/v1/chat', {
+      const response = await fetch('https://sahayak-ai-xkx9.onrender.com/api/v1/chat', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
