@@ -11,3 +11,4 @@ python-dotenv
 httpx
 supabase>=2.3.0
 pyjwt>=2.8.0
+fastembed
