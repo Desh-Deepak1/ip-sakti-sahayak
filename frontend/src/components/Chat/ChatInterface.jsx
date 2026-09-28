@@ -348,10 +348,10 @@ export default function ChatInterface() {
                       <>
                         <div className="whitespace-pre-wrap font-medium" dangerouslySetInnerHTML={formatAIResponse(msg.text)} />
                         
-                        {/* SOURCES SECTION */}
+                        {/* DYNAMIC SOURCES SECTION */}
                         {msg.citations && msg.citations.length > 0 && (
                           <div className="mt-4 pt-3 border-t border-purple-100">
-                            <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Sources</div>
+                            <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Sources & References</div>
                             <div className="flex flex-wrap gap-2">
                               {msg.citations.map((cite, cIdx) => (
                                 <a 
@@ -393,7 +393,7 @@ export default function ChatInterface() {
             <div className="w-full max-w-3xl bg-white/95 backdrop-blur-xl border border-gray-200 rounded-full shadow-2xl p-1.5 sm:p-2 flex items-center focus-within:border-purple-300 transition-all duration-300">
               <label className="cursor-pointer p-2 text-gray-500 hover:text-purple-600 transition-colors ml-1 rounded-full hover:bg-purple-50">
                 <input type="file" className="hidden" onChange={(e) => setAttachment(e.target.files[0])} />
-                <svg className="w-5 h-5 sm:w-6 sm:h-6 transform rotate-45" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+                <svg className="w-5 h-5 sm:w-6 sm:h-6 transform rotate-45" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2_2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
               </label>
               {attachment && <span className="ml-1 text-xs font-bold text-purple-800 bg-purple-100 px-2.5 py-1 rounded-lg truncate max-w-[90px] shadow-sm">{attachment.name}</span>}
               

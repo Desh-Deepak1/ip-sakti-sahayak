@@ -25,65 +25,70 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
     try:
         user_query_lower = request.query.strip().lower()
         
-        # 1. General Query Intent Check (Saves API tokens & skips RAG)
+        # 1. Quick General Query Intent Check (Saves API tokens)
         general_triggers = ["hi", "hello", "hey", "who are you", "how are you", "gm", "good morning", "sup", "thanks", "thank you"]
-        if user_query_lower in general_triggers or len(user_query_lower.split()) <= 2 and not any(k in user_query_lower for k in ["act", "patent", "drug", "law", "ip", "ayurveda", "formulation", "trademark"]):
-            general_response = (
+        is_general = user_query_lower in general_triggers or (len(user_query_lower.split()) <= 2 and not any(k in user_query_lower for k in ["act", "patent", "drug", "law", "ip", "ayurveda", "formulation", "trademark", "copyright", "design"]))
+
+        if is_general:
+            llm_text = (
                 "Hello! I am IP-SAKTI Sahayak, your expert AI legal assistant for Intellectual Property and Ayurveda regulations. "
                 "The question you asked is not related to legal or regulatory queries. Would you like to ask a legal query regarding IP, patents, or Ayurveda laws?"
             )
-            return {
-                "response": general_response,
-                "evidence_score": {"score": 1.0, "rating": "General Query"},
-                "citations": [],
-                "disclaimer": ""
-            }
+            citations = []
+        else:
+            # 2. Execute Context Retrieval for Legal Queries
+            raw_chunks = await retrieve_evidence(request.query)
+            
+            system_prompt = (
+                "You are IP-SAKTI Sahayak, an expert AI legal assistant for Ayurveda. "
+                "Analyze the user's query strictly based on the provided Context Documents. "
+                "Structure your EXACT response using THESE EXACT bolded headings:\n"
+                "**Preliminary Assessment:**\n"
+                "**Reasons:**\n"
+                "**Relevant Statutory Provisions:**\n"
+                "**Prior-Art Search Suggestions:**\n"
+                "**ABS Warning:**\n"
+                "**Next Action:**\n"
+            )
+            
+            llm_text = await process_llm_request(
+                task_type="rag_answer",
+                system_prompt=system_prompt,
+                user_prompt=request.query,
+                context=raw_chunks
+            )
 
-        # 2. Execute Context Retrieval for Legal Queries
-        raw_chunks = await retrieve_evidence(request.query)
-        
-        system_prompt = (
-            "You are IP-SAKTI Sahayak, an expert AI legal assistant for Ayurveda. "
-            "Analyze the user's query strictly based on the provided Context Documents. "
-            "Structure your EXACT response using THESE EXACT bolded headings:\n"
-            "**Preliminary Assessment:**\n"
-            "**Reasons:**\n"
-            "**Relevant Statutory Provisions:**\n"
-            "**Prior-Art Search Suggestions:**\n"
-            "**ABS Warning:**\n"
-            "**Next Action:**\n"
-        )
-        
-        llm_text = await process_llm_request(
-            task_type="rag_answer",
-            system_prompt=system_prompt,
-            user_prompt=request.query,
-            context=raw_chunks
-        )
+            if "Error:" in llm_text:
+                raise Exception(llm_text)
 
-        if "Error:" in llm_text:
-            raise Exception(llm_text)
+            # 3. Extract Dynamic Legal Citations from retrieved chunks
+            citations = []
+            for chunk in raw_chunks:
+                payload = chunk.get("payload", {})
+                if payload:
+                    act_name = payload.get("act_name") or payload.get("title") or payload.get("document_name") or "Statutory Provision"
+                    section = payload.get("section", "")
+                    source_link = payload.get("source_link") or payload.get("url") or payload.get("link")
+                    
+                    if source_link:
+                        citations.append({
+                            "title": f"{act_name} {section}".strip(),
+                            "type": "Statute / Document",
+                            "url": source_link
+                        })
 
-        # 3. Extract Legal Citations and Sources with Links
-        citations = []
-        for chunk in raw_chunks:
-            if chunk.get("payload"):
-                act_name = chunk.get("payload", {}).get("act_name", "Statutory Provision")
-                section = chunk.get("payload", {}).get("section", "")
-                source_link = chunk.get("payload", {}).get("source_link", "https://ipindia.gov.in")
-                citations.append({
-                    "title": f"{act_name} {section}".strip(),
-                    "type": "Statute",
-                    "url": source_link
-                })
+            # Fallback if chunks don't have explicit links
+            if not citations and not is_general:
+                citations = [{
+                    "title": "Indian Intellectual Property Portal",
+                    "type": "Official Registry",
+                    "url": "https://ipindia.gov.in"
+                }]
 
-        if not citations:
-            citations = [{"title": "Live AI Knowledge Base (General Provisions)", "type": "Statute", "url": "https://ipindia.gov.in"}]
+            unique_citations = list({c["title"]: c for c in citations}.values())
+            citations = unique_citations
 
-        # Deduplicate citations
-        unique_citations = {c["title"]: c for c in citations}.values()
-
-        # 4. Upsert user profile & save chat history
+        # 4. Upsert user profile & ALWAYS save chat history (both user query and response)
         try:
             user_info = supabase.auth.admin.get_user_by_id(user_id)
             user_email = user_info.user.email
@@ -109,9 +114,9 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
 
         return {
             "response": llm_text,
-            "evidence_score": {"score": 0.95, "rating": "High Confidence"},
-            "citations": list(unique_citations),
-            "disclaimer": "IP-SAKTI Sahayak can make mistakes. Verify important information."
+            "evidence_score": {"score": 1.0 if is_general else 0.95, "rating": "General" if is_general else "High Confidence"},
+            "citations": citations,
+            "disclaimer": "" if is_general else "IP-SAKTI Sahayak can make mistakes. Verify important information."
         }
 
     except Exception as e:
