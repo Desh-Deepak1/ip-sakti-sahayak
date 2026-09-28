@@ -62,7 +62,6 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
             user_info = supabase.auth.admin.get_user_by_id(user_id)
             user_email = user_info.user.email
         except Exception:
-            # Fallback just in case admin fetch fails, so the app never crashes
             user_email = f"user_{user_id[:8]}@ip-sakti.com"
 
         supabase.table("profiles").upsert({
@@ -93,7 +92,7 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
     except Exception as e:
         import traceback
         print("\n" + "="*60)
-        print("🚨 ASLI ERROR YAHAN HAI (BHEJO MUJHE):")
+        print("🚨 ASLI ERROR YAHAN HAI:")
         traceback.print_exc()
         print("="*60 + "\n")
         raise HTTPException(status_code=500, detail=f"Pipeline Execution Failed: {str(e)}")
@@ -101,14 +100,12 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
 @router.get("/history")
 async def get_chat_history(user_id: str = Depends(get_current_user)):
     try:
-        # Retrieve chronological chat records for the authenticated user
         response = supabase.table("chat_sessions") \
             .select("message_content, role, created_at") \
             .eq("user_id", user_id) \
             .order("created_at", desc=False) \
             .execute()
         
-        # Format the database rows into the structure expected by the React frontend
         formatted_history = []
         for row in response.data:
             formatted_history.append({
@@ -120,3 +117,13 @@ async def get_chat_history(user_id: str = Depends(get_current_user)):
         return {"history": formatted_history}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"History Retrieval Failed: {str(e)}")
+
+@router.delete("/history")
+async def delete_chat_history(query: str, user_id: str = Depends(get_current_user)):
+    try:
+        # Delete the specific user query and its associated session records from cloud database
+        supabase.table("chat_sessions").delete().eq("user_id", user_id).eq("message_content", query).execute()
+        
+        return {"status": "success", "message": "Chat deleted permanently from database"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

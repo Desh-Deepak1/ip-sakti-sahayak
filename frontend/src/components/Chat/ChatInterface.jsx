@@ -78,21 +78,37 @@ export default function ChatInterface() {
     }
   };
 
-  // Helper to delete a specific history conversation instantly
-  const handleDeleteHistoryItem = (e, itemText) => {
+  // Helper to delete a specific history conversation permanently from cloud & UI
+  const handleDeleteHistoryItem = async (e, itemText) => {
     e.stopPropagation(); // Prevents opening the chat when clicking delete
     
-    // Filter out messages related to this query from fullHistory
-    const updatedFullHistory = fullHistory.filter(m => m.text !== itemText);
-    setFullHistory(updatedFullHistory);
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (!currentSession?.access_token) return;
 
-    // Update the sidebar history list
-    const updatedHistoryList = historyList.filter(item => item !== itemText);
-    setHistoryList(updatedHistoryList);
+      const response = await fetch(`https://sahayak-ai-xkx9.onrender.com/api/v1/history?query=${encodeURIComponent(itemText)}`, {
+        method: 'DELETE',
+        headers: { 
+          'Authorization': `Bearer ${currentSession.access_token}` 
+        }
+      });
 
-    // If the currently active chat matches this item, clear the chat view
-    if (messages.length > 0 && messages[0].text === itemText) {
-      setMessages([]);
+      if (!response.ok) {
+        throw new Error("Failed to delete from database");
+      }
+
+      const updatedFullHistory = fullHistory.filter(m => m.text !== itemText);
+      setFullHistory(updatedFullHistory);
+
+      const updatedHistoryList = historyList.filter(item => item !== itemText);
+      setHistoryList(updatedHistoryList);
+
+      if (messages.length > 0 && messages[0].text === itemText) {
+        setMessages([]);
+      }
+    } catch (error) {
+      console.error("Error deleting chat:", error);
+      alert("Could not delete chat permanently. Please try again.");
     }
   };
 
@@ -126,7 +142,6 @@ export default function ChatInterface() {
     const queryToSend = customQuery || input;
     if (!queryToSend.trim() && !attachment) return;
 
-    // Check session first
     const { data: { session: currentSession } } = await supabase.auth.getSession();
     if (!currentSession?.access_token) {
       alert("Session expired. Please log in again.");
@@ -170,7 +185,6 @@ export default function ChatInterface() {
     }
   };
 
-  // Format AI Response to remove * and # completely
   const formatAIResponse = (text) => {
     if (!text) return { __html: "Processing..." };
     let formattedHtml = text.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-gray-900">$1</strong>');
@@ -183,14 +197,10 @@ export default function ChatInterface() {
 
   return (
     <div className="flex h-[100dvh] bg-gradient-to-b from-indigo-50 via-white to-fuchsia-50 text-gray-900 font-sans overflow-hidden relative">
-      
-      {/* Tech Grid Overlay */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px] pointer-events-none z-0"></div>
 
-      {/* Drawer Overlay */}
       {isDrawerOpen && <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 transition-opacity" onClick={() => setIsDrawerOpen(false)}></div>}
 
-      {/* Side Panel (History) */}
       <div className={`fixed top-0 left-0 h-full w-[280px] sm:w-[300px] bg-white/95 backdrop-blur-xl border-r border-purple-100 z-50 transform transition-transform duration-300 ease-in-out shadow-2xl flex flex-col ${isDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-4 sm:p-6 border-b border-gray-100 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -219,7 +229,6 @@ export default function ChatInterface() {
                     <span className="truncate">{item}</span>
                   </div>
                   
-                  {/* Always Visible Delete Trash Button (Gemini Style) */}
                   <button 
                     onClick={(e) => handleDeleteHistoryItem(e, item)} 
                     className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition-colors flex-shrink-0"
@@ -239,10 +248,8 @@ export default function ChatInterface() {
         </div>
       </div>
 
-      {/* Profile Modal Overlay */}
       {isProfileOpen && <div className="fixed inset-0 z-50" onClick={() => setIsProfileOpen(false)}></div>}
 
-      {/* Profile Modal */}
       {isProfileOpen && (
         <div className="absolute top-16 right-4 sm:right-8 w-[300px] sm:w-[340px] bg-white/95 backdrop-blur-xl border border-gray-200 rounded-2xl shadow-2xl z-50 p-5 sm:p-6 transform transition-all">
           <div className="flex items-center justify-between mb-4">
@@ -270,10 +277,7 @@ export default function ChatInterface() {
         </div>
       )}
 
-      {/* Main Content Area - Fully Flex Container */}
       <div className="flex-1 flex flex-col h-full relative w-full z-10 overflow-hidden">
-        
-        {/* Header - Flex-shrink so it never overlaps */}
         <header className="flex-shrink-0 flex items-center justify-between px-3 sm:px-6 md:px-8 py-3 bg-white/95 backdrop-blur-xl border-b border-gray-200/50 shadow-sm z-30">
           <div className="flex items-center gap-2 sm:gap-4">
             <button onClick={() => setIsDrawerOpen(true)} className="text-gray-700 hover:text-purple-700 transition-colors p-1 rounded-lg hover:bg-gray-100">
@@ -288,7 +292,6 @@ export default function ChatInterface() {
               <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-green-500 ml-0.5 shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse flex-shrink-0"></span>
             </div>
 
-            {/* New Chat Icon Button */}
             <button onClick={handleNewChat} className="p-1.5 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-700 transition-colors shadow-sm" title="Start New Chat">
               <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"/></svg>
             </button>
@@ -306,7 +309,6 @@ export default function ChatInterface() {
           </div>
         </header>
 
-        {/* Chat Area & Welcome Screen */}
         {messages.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center px-4 md:px-6 z-10 overflow-y-auto">
             <div className="w-20 h-20 sm:w-28 sm:h-28 mb-6 sm:mb-8 rounded-full border-4 border-white shadow-2xl overflow-hidden bg-white hover:scale-105 transition-transform duration-500 flex-shrink-0">
@@ -377,7 +379,6 @@ export default function ChatInterface() {
           </div>
         )}
 
-        {/* Floating Input Box for active chat - Flex-shrink so it stays at bottom nicely */}
         {messages.length > 0 && (
           <div className="flex-shrink-0 w-full px-3 sm:px-6 py-3 bg-white/60 backdrop-blur-md border-t border-gray-200/50 flex justify-center z-30">
             <div className="w-full max-w-3xl bg-white/95 backdrop-blur-xl border border-gray-200 rounded-full shadow-2xl p-1.5 sm:p-2 flex items-center focus-within:border-purple-300 transition-all duration-300">
