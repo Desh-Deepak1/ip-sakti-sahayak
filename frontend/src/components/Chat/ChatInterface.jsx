@@ -5,7 +5,6 @@ import { supabase } from '../../supabaseClient';
 export default function ChatInterface() {
   const { user, session } = useContext(AppContext) || {};
   
-  // States
   const [messages, setMessages] = useState([]);
   const [fullHistory, setFullHistory] = useState([]); 
   const [input, setInput] = useState('');
@@ -20,7 +19,6 @@ export default function ChatInterface() {
   
   const messagesEndRef = useRef(null);
   
-  // Auto-scroll to bottom
   useEffect(() => { 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); 
   }, [messages, loading]);
@@ -34,7 +32,6 @@ export default function ChatInterface() {
     }
   }, [user]);
 
-  // Fetches full history silently in the background
   const loadFullHistory = async () => {
     try {
       const { data: { session: currentSession } } = await supabase.auth.getSession();
@@ -48,9 +45,7 @@ export default function ChatInterface() {
       if (response.ok) {
         const data = await response.json();
         const chatHistory = data.history || [];
-        
         setFullHistory(chatHistory);
-        
         const userQueries = chatHistory.filter(m => m.sender === 'user').map(m => m.text);
         setHistoryList([...new Set(userQueries)].reverse().slice(0, 15)); 
       }
@@ -63,7 +58,6 @@ export default function ChatInterface() {
     loadFullHistory();
   }, []); 
 
-  // Load ONLY the clicked conversation
   const handleHistoryClick = (itemText) => {
     const startIndex = fullHistory.findIndex(m => m.sender === 'user' && m.text === itemText);
     if (startIndex !== -1) {
@@ -78,31 +72,21 @@ export default function ChatInterface() {
     }
   };
 
-  // Helper to delete a specific history conversation permanently from cloud & UI
   const handleDeleteHistoryItem = async (e, itemText) => {
-    e.stopPropagation(); // Prevents opening the chat when clicking delete
-    
+    e.stopPropagation();
     try {
       const { data: { session: currentSession } } = await supabase.auth.getSession();
       if (!currentSession?.access_token) return;
 
       const response = await fetch(`https://sahayak-ai-xkx9.onrender.com/api/v1/history?query=${encodeURIComponent(itemText)}`, {
         method: 'DELETE',
-        headers: { 
-          'Authorization': `Bearer ${currentSession.access_token}` 
-        }
+        headers: { 'Authorization': `Bearer ${currentSession.access_token}` }
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to delete from database");
-      }
+      if (!response.ok) throw new Error("Failed to delete from database");
 
-      const updatedFullHistory = fullHistory.filter(m => m.text !== itemText);
-      setFullHistory(updatedFullHistory);
-
-      const updatedHistoryList = historyList.filter(item => item !== itemText);
-      setHistoryList(updatedHistoryList);
-
+      setFullHistory(prev => prev.filter(m => m.text !== itemText));
+      setHistoryList(prev => prev.filter(item => item !== itemText));
       if (messages.length > 0 && messages[0].text === itemText) {
         setMessages([]);
       }
@@ -112,7 +96,6 @@ export default function ChatInterface() {
     }
   };
 
-  // Helper to start a completely new chat
   const handleNewChat = () => {
     setMessages([]);
     setAttachment(null);
@@ -157,7 +140,6 @@ export default function ChatInterface() {
 
     try {
       const token = currentSession.access_token;
-
       const response = await fetch('https://sahayak-ai-xkx9.onrender.com/api/v1/chat', {
         method: 'POST',
         headers: { 
@@ -173,7 +155,11 @@ export default function ChatInterface() {
       }
       
       const data = await response.json();
-      setMessages(prev => [...prev, { sender: 'assistant', text: data.response }]);
+      setMessages(prev => [...prev, { 
+        sender: 'assistant', 
+        text: data.response, 
+        citations: data.citations || [] 
+      }]);
       loadFullHistory(); 
     } catch (err) {
       setMessages(prev => [...prev, {
@@ -359,7 +345,30 @@ export default function ChatInterface() {
                     {msg.sender === 'user' ? (
                       <div className="whitespace-pre-wrap font-medium">{msg.text}</div>
                     ) : (
-                      <div className="whitespace-pre-wrap font-medium" dangerouslySetInnerHTML={formatAIResponse(msg.text)} />
+                      <>
+                        <div className="whitespace-pre-wrap font-medium" dangerouslySetInnerHTML={formatAIResponse(msg.text)} />
+                        
+                        {/* SOURCES SECTION */}
+                        {msg.citations && msg.citations.length > 0 && (
+                          <div className="mt-4 pt-3 border-t border-purple-100">
+                            <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Sources</div>
+                            <div className="flex flex-wrap gap-2">
+                              {msg.citations.map((cite, cIdx) => (
+                                <a 
+                                  key={cIdx} 
+                                  href={cite.url} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold rounded-lg border border-purple-200 transition-all shadow-sm"
+                                >
+                                  <svg className="w-3.5 h-3.5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                                  {cite.title} <span className="text-[10px] text-gray-400 font-normal">({cite.type})</span>
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
