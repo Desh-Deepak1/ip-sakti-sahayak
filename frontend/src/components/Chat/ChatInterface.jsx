@@ -2,6 +2,13 @@ import { useState, useRef, useEffect, useContext } from 'react';
 import { AppContext } from '../../context/AppProvider';
 import { supabase } from '../../supabaseClient';
 
+// Language codes for Voice Recognition & TTS
+const languageCodes = {
+  'English': 'en-IN', 'Hindi': 'hi-IN', 'Marathi': 'mr-IN', 'Bengali': 'bn-IN',
+  'Tamil': 'ta-IN', 'Telugu': 'te-IN', 'Gujarati': 'gu-IN', 'Kannada': 'kn-IN',
+  'Malayalam': 'ml-IN', 'Punjabi': 'pa-IN'
+};
+
 export default function ChatInterface() {
   const { user, session } = useContext(AppContext) || {};
   
@@ -9,8 +16,10 @@ export default function ChatInterface() {
   const [fullHistory, setFullHistory] = useState([]); 
   const [input, setInput] = useState('');
   const [jurisdiction, setJurisdiction] = useState('INDIA');
+  const [language, setLanguage] = useState('English');
   const [loading, setLoading] = useState(false);
   const [attachment, setAttachment] = useState(null);
+  const [isListening, setIsListening] = useState(false);
   
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -54,9 +63,7 @@ export default function ChatInterface() {
     }
   };
 
-  useEffect(() => {
-    loadFullHistory();
-  }, []); 
+  useEffect(() => { loadFullHistory(); }, []); 
 
   const handleHistoryClick = (itemText) => {
     const startIndex = fullHistory.findIndex(m => m.sender === 'user' && m.text === itemText);
@@ -82,25 +89,19 @@ export default function ChatInterface() {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${currentSession.access_token}` }
       });
-
       if (!response.ok) throw new Error("Failed to delete from database");
 
       setFullHistory(prev => prev.filter(m => m.text !== itemText));
       setHistoryList(prev => prev.filter(item => item !== itemText));
-      if (messages.length > 0 && messages[0].text === itemText) {
-        setMessages([]);
-      }
+      if (messages.length > 0 && messages[0].text === itemText) setMessages([]);
     } catch (error) {
-      console.error("Error deleting chat:", error);
-      alert("Could not delete chat permanently. Please try again.");
+      console.error(error);
+      alert("Could not delete chat permanently.");
     }
   };
 
   const handleNewChat = () => {
-    setMessages([]);
-    setAttachment(null);
-    setInput('');
-    setIsDrawerOpen(false);
+    setMessages([]); setAttachment(null); setInput(''); setIsDrawerOpen(false);
   };
 
   const handleLogout = async () => {
@@ -115,8 +116,40 @@ export default function ChatInterface() {
       const { error } = await supabase.auth.updateUser({
         data: { name: profileData.name, username: profileData.username }
       });
-      if (!error) setIsProfileOpen(false);
-      else alert("Error updating profile: " + error.message);
+      if (!error) setIsProfileOpen(false); else alert("Error: " + error.message);
+    }
+  };
+
+  // WEB SPEECH API FOR MIC INPUT
+  const toggleListening = () => {
+    if (isListening) return;
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Voice input is not supported in this browser. Please use Chrome.");
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.lang = languageCodes[language] || 'en-IN';
+    recognition.interimResults = false;
+    
+    recognition.onstart = () => setIsListening(true);
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setInput(prev => prev + (prev ? " " : "") + transcript);
+    };
+    recognition.onerror = () => setIsListening(false);
+    recognition.onend = () => setIsListening(false);
+    recognition.start();
+  };
+
+  // TEXT TO SPEECH FUNCTION
+  const speakText = (text) => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const plainText = text.replace(/<[^>]+>/g, '').replace(/[*#]/g, '');
+      const utterance = new SpeechSynthesisUtterance(plainText);
+      utterance.lang = languageCodes[language] || 'en-IN';
+      window.speechSynthesis.speak(utterance);
     }
   };
 
@@ -127,8 +160,7 @@ export default function ChatInterface() {
 
     const { data: { session: currentSession } } = await supabase.auth.getSession();
     if (!currentSession?.access_token) {
-      alert("Session expired. Please log in again.");
-      return;
+      alert("Session expired. Please log in again."); return;
     }
 
     setInput('');
@@ -142,30 +174,22 @@ export default function ChatInterface() {
       const token = currentSession.access_token;
       const response = await fetch('https://sahayak-ai-xkx9.onrender.com/api/v1/chat', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ query: queryToSend, jurisdiction: jurisdiction })
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ query: queryToSend, jurisdiction: jurisdiction, language: language })
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Server error (${response.status}): ${errorText}`);
-      }
+      if (!response.ok) throw new Error(`Server error (${response.status})`);
       
       const data = await response.json();
       setMessages(prev => [...prev, { 
         sender: 'assistant', 
         text: data.response, 
-        citations: data.citations || [] 
+        citations: data.citations || [],
+        disclaimer: data.disclaimer || ''
       }]);
       loadFullHistory(); 
     } catch (err) {
-      setMessages(prev => [...prev, {
-        sender: 'assistant',
-        text: `**System Error:** ${err.message}`
-      }]);
+      setMessages(prev => [...prev, { sender: 'assistant', text: `**System Error:** ${err.message}` }]);
     } finally {
       setLoading(false);
     }
@@ -173,19 +197,10 @@ export default function ChatInterface() {
 
   const formatAIResponse = (text) => {
     if (!text) return { __html: "Processing..." };
-    
-    // FIX: Split text into lines, trim leading/trailing spaces from EACH line, and rejoin.
-    // This removes the AI's artificial indentation that breaks left-alignment.
-    let cleanedText = text
-      .split('\n')
-      .map(line => line.trim())
-      .join('\n');
-
+    let cleanedText = text.split('\n').map(line => line.trim()).join('\n');
     let formattedHtml = cleanedText.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-gray-900">$1</strong>');
     formattedHtml = formattedHtml.replace(/[*#]/g, '');
     formattedHtml = formattedHtml.replace(/\n/g, '<br />');
-    
-    // Wrapped in a block div enforcing full width and strict left alignment
     return { __html: `<div class="text-left w-full block">${formattedHtml}</div>` };
   };
 
@@ -215,21 +230,12 @@ export default function ChatInterface() {
               <div className="px-3 py-2 text-sm text-gray-400 italic">No recent chats found.</div>
             ) : (
               historyList.map((item, index) => (
-                <div 
-                  key={index} 
-                  onClick={() => handleHistoryClick(item)} 
-                  className="px-3 sm:px-4 py-3 text-xs sm:text-sm font-medium text-gray-700 bg-white hover:bg-purple-50 rounded-xl cursor-pointer transition-all truncate border border-gray-100 shadow-sm flex items-center justify-between"
-                >
+                <div key={index} onClick={() => handleHistoryClick(item)} className="px-3 sm:px-4 py-3 text-xs sm:text-sm font-medium text-gray-700 bg-white hover:bg-purple-50 rounded-xl cursor-pointer transition-all truncate border border-gray-100 shadow-sm flex items-center justify-between">
                   <div className="flex items-center gap-2 sm:gap-3 truncate mr-2">
                     <svg className="w-4 h-4 text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
                     <span className="truncate">{item}</span>
                   </div>
-                  
-                  <button 
-                    onClick={(e) => handleDeleteHistoryItem(e, item)} 
-                    className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition-colors flex-shrink-0"
-                    title="Delete chat"
-                  >
+                  <button onClick={(e) => handleDeleteHistoryItem(e, item)} className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition-colors flex-shrink-0" title="Delete chat">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                   </button>
                 </div>
@@ -261,10 +267,6 @@ export default function ChatInterface() {
               <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 ml-1">Username</label>
               <input type="text" value={profileData.username} onChange={(e) => setProfileData({...profileData, username: e.target.value})} className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-gray-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
             </div>
-            <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 ml-1">Full Name</label>
-              <input type="text" value={profileData.name} onChange={(e) => setProfileData({...profileData, name: e.target.value})} placeholder="e.g. Rahul Kumar" className="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-gray-900 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
-            </div>
             <div className="flex gap-2 sm:gap-3 pt-3">
               <button type="submit" className="flex-1 bg-gray-900 hover:bg-black text-white py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all shadow-md">Save</button>
               <button type="button" onClick={handleLogout} className="flex-1 bg-red-50 text-red-600 py-2.5 rounded-xl text-xs sm:text-sm font-semibold hover:bg-red-100 transition-colors border border-red-200">Log Out</button>
@@ -280,12 +282,12 @@ export default function ChatInterface() {
               <svg className="w-6 h-6 sm:w-7 sm:h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
             
-            <div className="flex items-center gap-1.5 sm:gap-2 bg-gray-50 px-2.5 sm:px-4 py-1.5 rounded-full border border-gray-200 shadow-sm">
+            <div className="flex items-center gap-1.5 sm:gap-2 bg-gray-50 px-2.5 sm:px-4 py-1.5 rounded-full border border-gray-200 shadow-sm hidden sm:flex">
               <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-full overflow-hidden border border-gray-200 flex-shrink-0">
                 <img src="/logo.png" alt="logo" className="w-full h-full object-cover" />
               </div>
-              <span className="font-bold text-xs sm:text-sm text-gray-900 tracking-wide truncate max-w-[90px] sm:max-w-none">IP-SAKTI</span>
-              <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-green-500 ml-0.5 shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse flex-shrink-0"></span>
+              <span className="font-bold text-xs sm:text-sm text-gray-900 tracking-wide truncate">IP-SAKTI</span>
+              <span className="w-2 h-2 rounded-full bg-green-500 ml-0.5 animate-pulse flex-shrink-0"></span>
             </div>
 
             <button onClick={handleNewChat} className="p-1.5 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-700 transition-colors shadow-sm" title="Start New Chat">
@@ -294,6 +296,18 @@ export default function ChatInterface() {
           </div>
           
           <div className="flex items-center gap-2 sm:gap-4">
+            {/* NEW VISIBLE LANGUAGE DROPDOWN TO THE LEFT OF TOGGLE */}
+            <select 
+              value={language} 
+              onChange={(e) => setLanguage(e.target.value)} 
+              className="bg-white border border-purple-200 text-purple-900 text-xs font-bold rounded-full px-3 py-1.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-400 cursor-pointer"
+              title="Select Language for Chat and Voice"
+            >
+              {Object.keys(languageCodes).map(lang => (
+                <option key={lang} value={lang}>{lang}</option>
+              ))}
+            </select>
+
             <div className="flex bg-gray-100 p-0.5 sm:p-1 rounded-full border border-gray-200 shadow-sm">
               <button onClick={() => setJurisdiction('INDIA')} className={`px-3 sm:px-5 py-1 text-[10px] sm:text-xs font-bold rounded-full transition-all duration-300 ${jurisdiction === 'INDIA' ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md' : 'text-gray-600 hover:text-gray-900'}`}>India</button>
               <button onClick={() => setJurisdiction('INTERNATIONAL')} className={`px-3 sm:px-5 py-1 text-[10px] sm:text-xs font-bold rounded-full transition-all duration-300 ${jurisdiction === 'INTERNATIONAL' ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md' : 'text-gray-600 hover:text-gray-900'}`}>Intl</button>
@@ -310,30 +324,8 @@ export default function ChatInterface() {
             <div className="w-20 h-20 sm:w-28 sm:h-28 mb-6 sm:mb-8 rounded-full border-4 border-white shadow-2xl overflow-hidden bg-white hover:scale-105 transition-transform duration-500 flex-shrink-0">
                <img src="/logo.png" className="w-full h-full object-cover" alt="IP SAKTI" />
             </div>
-            
             <h1 className="text-2xl sm:text-4xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-gray-900 to-gray-600 tracking-tight mb-3 text-center drop-shadow-sm px-2">Hello, {displayUserName}</h1>
             <p className="text-sm sm:text-lg md:text-xl text-gray-600 font-medium mb-8 sm:mb-12 text-center max-w-xl leading-relaxed px-4">Experience the next generation of <span className="font-bold text-purple-700">{jurisdiction === 'INDIA' ? 'Indian' : 'International'}</span> Intellectual Property analysis powered by Ayurveda intelligence.</p>
-            
-            <div className="w-full max-w-2xl px-2">
-              <div className="bg-white/90 backdrop-blur-xl border border-white rounded-[1.5rem] sm:rounded-[2rem] shadow-2xl p-2 mb-4 focus-within:ring-4 focus-within:ring-purple-200 transition-all duration-300">
-                <form onSubmit={handleSend} className="flex flex-col">
-                  <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask anything about IP & Ayurveda..." className="w-full px-4 sm:px-6 py-3 sm:py-4 text-sm sm:text-lg text-gray-900 focus:outline-none bg-transparent placeholder-gray-400 font-medium" />
-                  
-                  <div className="flex items-center justify-between px-2 sm:px-4 pb-1 pt-2 border-t border-gray-100/50 mt-1">
-                    <div className="flex items-center gap-2">
-                      <label className="cursor-pointer text-gray-500 hover:text-purple-600 transition-colors p-2 rounded-full hover:bg-purple-50 flex items-center gap-2">
-                        <input type="file" className="hidden" onChange={(e) => setAttachment(e.target.files[0])} />
-                        <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
-                        {attachment && <span className="text-xs sm:text-sm font-bold text-gray-800 truncate max-w-[100px]">{attachment.name}</span>}
-                      </label>
-                    </div>
-                    <button type="submit" disabled={loading} className="bg-gradient-to-r from-gray-900 to-black hover:scale-105 text-white p-2.5 sm:p-3.5 rounded-full transition-all duration-300 disabled:opacity-50 shadow-lg">
-                      <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 12h14M12 5l7 7-7 7"/></svg>
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </div>
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto w-full scroll-smooth px-3 sm:px-6 py-4 space-y-4 sm:space-y-6 z-10">
@@ -345,8 +337,15 @@ export default function ChatInterface() {
                       <img src="/logo.png" className="w-full h-full object-cover rounded-full" alt="bot" />
                     </div>
                   )}
-                  {/* ADDED text-left to the container and break-words for extreme safety */}
-                  <div className={`max-w-[88%] sm:max-w-[80%] rounded-[1.2rem] sm:rounded-[1.5rem] px-4 sm:px-6 py-3 sm:py-5 text-xs sm:text-[15px] leading-relaxed shadow-lg text-left break-words ${msg.sender === 'user' ? 'bg-gray-100 text-gray-900 border border-gray-200 rounded-tr-sm' : 'bg-white/95 backdrop-blur-sm border border-purple-100/50 text-gray-800 rounded-tl-sm'}`}>
+                  <div className={`max-w-[88%] sm:max-w-[80%] rounded-[1.2rem] sm:rounded-[1.5rem] px-4 sm:px-6 py-3 sm:py-5 text-xs sm:text-[15px] leading-relaxed shadow-lg text-left break-words relative group ${msg.sender === 'user' ? 'bg-gray-100 text-gray-900 border border-gray-200 rounded-tr-sm' : 'bg-white/95 backdrop-blur-sm border border-purple-100/50 text-gray-800 rounded-tl-sm'}`}>
+                    
+                    {/* TTS Speaker Icon for Assistant Messages */}
+                    {msg.sender === 'assistant' && (
+                      <button onClick={() => speakText(msg.text)} className="absolute top-3 right-3 text-gray-400 hover:text-purple-600 opacity-0 group-hover:opacity-100 transition-opacity" title="Read Aloud">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/></svg>
+                      </button>
+                    )}
+
                     {msg.file && (
                       <div className={`mb-2 sm:mb-3 inline-flex items-center gap-2 px-2.5 py-1 rounded-lg text-[10px] sm:text-xs font-bold ${msg.sender === 'user' ? 'bg-white text-gray-800 shadow-sm' : 'bg-purple-50 text-purple-800'}`}>
                         <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
@@ -357,26 +356,22 @@ export default function ChatInterface() {
                       <div className="whitespace-pre-wrap font-medium">{msg.text}</div>
                     ) : (
                       <>
-                        <div className="whitespace-pre-wrap font-medium text-left w-full" dangerouslySetInnerHTML={formatAIResponse(msg.text)} />
-                        
+                        <div className="whitespace-pre-wrap font-medium text-left w-full pt-1" dangerouslySetInnerHTML={formatAIResponse(msg.text)} />
                         {msg.citations && msg.citations.length > 0 && (
                           <div className="mt-4 pt-3 border-t border-purple-100 text-left w-full">
                             <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Sources & References</div>
                             <div className="flex flex-wrap gap-2">
                               {msg.citations.map((cite, cIdx) => (
-                                <a 
-                                  key={cIdx} 
-                                  href={cite.url} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold rounded-lg border border-purple-200 transition-all shadow-sm"
-                                >
+                                <a key={cIdx} href={cite.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-3 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold rounded-lg border border-purple-200 transition-all shadow-sm">
                                   <svg className="w-3.5 h-3.5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-                                  {cite.title} <span className="text-[10px] text-gray-400 font-normal">({cite.type})</span>
+                                  {cite.title}
                                 </a>
                               ))}
                             </div>
                           </div>
+                        )}
+                        {msg.disclaimer && (
+                           <div className="mt-3 text-[10px] text-gray-400 italic border-t border-gray-100 pt-2">{msg.disclaimer}</div>
                         )}
                       </>
                     )}
@@ -384,7 +379,7 @@ export default function ChatInterface() {
                 </div>
               ))}
               {loading && (
-                <div className="flex justify-start items-center gap-3 sm:gap-4">
+                 <div className="flex justify-start items-center gap-3 sm:gap-4">
                   <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-white shadow-md animate-pulse flex-shrink-0 border-2 border-purple-100"></div>
                   <div className="bg-white/90 backdrop-blur-sm border border-purple-100/50 rounded-[1.2rem] sm:rounded-[1.5rem] rounded-tl-sm px-4 sm:px-6 py-3 shadow-lg flex gap-2 items-center h-12 sm:h-14">
                     <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 bg-purple-500 rounded-full animate-bounce"></span>
@@ -398,22 +393,27 @@ export default function ChatInterface() {
           </div>
         )}
 
-        {messages.length > 0 && (
-          <div className="flex-shrink-0 w-full px-3 sm:px-6 py-3 bg-white/60 backdrop-blur-md border-t border-gray-200/50 flex justify-center z-30">
-            <div className="w-full max-w-3xl bg-white/95 backdrop-blur-xl border border-gray-200 rounded-full shadow-2xl p-1.5 sm:p-2 flex items-center focus-within:border-purple-300 transition-all duration-300">
-              <label className="cursor-pointer p-2 text-gray-500 hover:text-purple-600 transition-colors ml-1 rounded-full hover:bg-purple-50">
-                <input type="file" className="hidden" onChange={(e) => setAttachment(e.target.files[0])} />
-                <svg className="w-5 h-5 sm:w-6 sm:h-6 transform rotate-45" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
-              </label>
-              {attachment && <span className="ml-1 text-xs font-bold text-purple-800 bg-purple-100 px-2.5 py-1 rounded-lg truncate max-w-[90px] shadow-sm">{attachment.name}</span>}
-              
-              <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask a follow-up question..." className="flex-1 px-3 text-sm sm:text-[16px] text-gray-900 font-medium focus:outline-none bg-transparent placeholder-gray-400" />
-              <button onClick={handleSend} disabled={loading} className="bg-gradient-to-r from-gray-900 to-black hover:scale-105 text-white p-2.5 sm:p-3.5 rounded-full text-sm font-semibold transition-all duration-300 disabled:opacity-50 mr-1 shadow-lg">
-                <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 12h14M12 5l7 7-7 7"/></svg>
-              </button>
-            </div>
+        {/* INPUT BOX AREA WITH MIC AND FILE ATTACHMENT */}
+        <div className="flex-shrink-0 w-full px-3 sm:px-6 py-3 bg-white/60 backdrop-blur-md border-t border-gray-200/50 flex justify-center z-30">
+          <div className="w-full max-w-3xl bg-white/95 backdrop-blur-xl border border-gray-200 rounded-full shadow-2xl p-1.5 sm:p-2 flex items-center focus-within:border-purple-300 transition-all duration-300">
+            <label className="cursor-pointer p-2 text-gray-500 hover:text-purple-600 transition-colors ml-1 rounded-full hover:bg-purple-50">
+              <input type="file" className="hidden" onChange={(e) => setAttachment(e.target.files[0])} />
+              <svg className="w-5 h-5 sm:w-6 sm:h-6 transform rotate-45" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+            </label>
+            {attachment && <span className="ml-1 text-xs font-bold text-purple-800 bg-purple-100 px-2.5 py-1 rounded-lg truncate max-w-[90px] shadow-sm">{attachment.name}</span>}
+            
+            <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Ask anything in ${language}...`} className="flex-1 px-3 text-sm sm:text-[16px] text-gray-900 font-medium focus:outline-none bg-transparent placeholder-gray-400" />
+            
+            {/* MIC BUTTON */}
+            <button type="button" onClick={toggleListening} className={`p-2 mr-1 rounded-full transition-colors ${isListening ? 'bg-red-100 text-red-600 animate-pulse' : 'text-gray-500 hover:bg-purple-50 hover:text-purple-600'}`} title="Speak">
+              <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+            </button>
+
+            <button onClick={handleSend} disabled={loading} className="bg-gradient-to-r from-gray-900 to-black hover:scale-105 text-white p-2.5 sm:p-3.5 rounded-full text-sm font-semibold transition-all duration-300 disabled:opacity-50 mr-1 shadow-lg">
+              <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </button>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
