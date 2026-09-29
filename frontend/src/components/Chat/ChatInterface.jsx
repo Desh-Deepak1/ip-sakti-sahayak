@@ -22,7 +22,7 @@ export default function ChatInterface() {
   const [loading, setLoading] = useState(false);
   const [attachment, setAttachment] = useState(null);
   const [isListening, setIsListening] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false); // To show loading state during voice fetch
+  const [isSpeaking, setIsSpeaking] = useState(false); 
   
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -30,6 +30,10 @@ export default function ChatInterface() {
   const [historyList, setHistoryList] = useState([]);
   
   const messagesEndRef = useRef(null);
+  
+  // NEW: Ref to store cached audio (solves latency) and track active audio (solves distortion)
+  const audioCache = useRef({});
+  const activeAudio = useRef(null);
   
   useEffect(() => { 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); 
@@ -117,6 +121,11 @@ export default function ChatInterface() {
   const handleNewChat = () => {
     setMessages([]); setAttachment(null); setInput(''); setIsDrawerOpen(false);
     sessionStorage.removeItem('activeChat');
+    // Stop any playing audio on new chat
+    if (activeAudio.current) {
+      activeAudio.current.pause();
+      setIsSpeaking(false);
+    }
   };
 
   const handleLogout = async () => {
@@ -157,31 +166,49 @@ export default function ChatInterface() {
     recognition.start();
   };
 
-  // BHASHINI API TEXT-TO-SPEECH (Plays the exact audio returned by Backend)
+  // ==========================================
+  // FIX: ZERO-LATENCY CACHED TTS AUDIO PLAYER
+  // ==========================================
   const speakText = async (text) => {
-    if (isSpeaking) return; // Prevent multiple clicks
-    
     try {
-      setIsSpeaking(true);
       const plainText = text.replace(/<[^>]+>/g, '').replace(/[*#]/g, '');
       
-      const response = await fetch('https://sahayak-ai-xkx9.onrender.com/api/v1/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: plainText, language: language })
-      });
-
-      if (!response.ok) throw new Error("TTS Engine Failed");
+      // FIX 1: Stop any currently playing audio immediately to prevent distortion overlap
+      if (activeAudio.current) {
+        activeAudio.current.pause();
+        activeAudio.current.currentTime = 0;
+      }
       
-      const data = await response.json();
-      if (data.audio) {
-        // Play the base64 audio exactly as Bhashini generated it
-        const audio = new Audio(`data:audio/wav;base64,${data.audio}`);
-        audio.play();
+      setIsSpeaking(true);
+
+      let audioBase64 = audioCache.current[plainText];
+
+      // FIX 2: If we don't have this audio in cache, fetch it from Bhashini
+      if (!audioBase64) {
+        const response = await fetch('https://sahayak-ai-xkx9.onrender.com/api/v1/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: plainText, language: language })
+        });
+
+        if (!response.ok) throw new Error("TTS Engine Failed");
         
-        audio.onended = () => {
-          setIsSpeaking(false);
-        };
+        const data = await response.json();
+        if (data.audio) {
+          audioBase64 = data.audio;
+          audioCache.current[plainText] = audioBase64; // Save to cache for instant replay
+        }
+      }
+
+      // Play the audio
+      if (audioBase64) {
+        const audio = new Audio(`data:audio/wav;base64,${audioBase64}`);
+        activeAudio.current = audio;
+        
+        audio.onended = () => setIsSpeaking(false);
+        audio.onerror = () => setIsSpeaking(false);
+        
+        await audio.play();
       } else {
         setIsSpeaking(false);
       }
@@ -208,6 +235,12 @@ export default function ChatInterface() {
 
     setMessages(prev => [...prev, { sender: 'user', text: queryToSend, file: currentAttachment?.name }]);
     setLoading(true);
+
+    // Stop audio if user sends a new message
+    if (activeAudio.current) {
+      activeAudio.current.pause();
+      setIsSpeaking(false);
+    }
 
     try {
       const token = currentSession.access_token;
