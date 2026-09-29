@@ -3,12 +3,29 @@ import { AppContext } from '../../context/AppProvider';
 import { supabase } from '../../supabaseClient';
 
 const languageCodes = {
-  'English': 'en-IN', 'Assamese': 'as-IN', 'Bengali': 'bn-IN', 'Bodo': 'brx-IN',
-  'Dogri': 'doi-IN', 'Gujarati': 'gu-IN', 'Hindi': 'hi-IN', 'Kannada': 'kn-IN',
-  'Kashmiri': 'ks-IN', 'Konkani': 'gom-IN', 'Maithili': 'mai-IN', 'Malayalam': 'ml-IN',
-  'Manipuri': 'mni-IN', 'Marathi': 'mr-IN', 'Nepali': 'ne-NP', 'Odia': 'or-IN',
-  'Punjabi': 'pa-IN', 'Sanskrit': 'sa-IN', 'Santali': 'sat-IN', 'Sindhi': 'sd-IN',
-  'Tamil': 'ta-IN', 'Telugu': 'te-IN', 'Urdu': 'ur-IN'
+  'English': 'en-IN',
+  'Assamese': 'as-IN',
+  'Bengali': 'bn-IN',
+  'Bodo': 'brx-IN',
+  'Dogri': 'doi-IN',
+  'Gujarati': 'gu-IN',
+  'Hindi': 'hi-IN',
+  'Kannada': 'kn-IN',
+  'Kashmiri': 'ks-IN',
+  'Konkani': 'gom-IN',
+  'Maithili': 'mai-IN',
+  'Malayalam': 'ml-IN',
+  'Manipuri': 'mni-IN',
+  'Marathi': 'mr-IN',
+  'Nepali': 'ne-NP',
+  'Odia': 'or-IN',
+  'Punjabi': 'pa-IN',
+  'Sanskrit': 'sa-IN',
+  'Santali': 'sat-IN',
+  'Sindhi': 'sd-IN',
+  'Tamil': 'ta-IN',
+  'Telugu': 'te-IN',
+  'Urdu': 'ur-IN'
 };
 
 export default function ChatInterface() {
@@ -18,7 +35,7 @@ export default function ChatInterface() {
   const [fullHistory, setFullHistory] = useState([]); 
   const [input, setInput] = useState('');
   const [jurisdiction, setJurisdiction] = useState('INDIA');
-  const [language, setLanguage] = useState('Hindi');
+  const [language, setLanguage] = useState('English'); // FIX: Wapas English default kar diya
   const [loading, setLoading] = useState(false);
   const [attachment, setAttachment] = useState(null);
   const [isListening, setIsListening] = useState(false);
@@ -30,10 +47,8 @@ export default function ChatInterface() {
   
   const messagesEndRef = useRef(null);
   
-  // Save/Restore Active Chat on Refresh
   useEffect(() => { 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); 
-    // Persist active messages to session storage so refresh doesn't wipe screen
     if (messages.length > 0) {
       sessionStorage.setItem('activeChat', JSON.stringify(messages));
     } else {
@@ -47,11 +62,14 @@ export default function ChatInterface() {
         name: user.user_metadata?.name || '',
         username: user.user_metadata?.username || user.email?.split('@')[0] || 'User'
       });
-      // Load any active chat from session storage if it exists
       const savedChat = sessionStorage.getItem('activeChat');
       if (savedChat) {
         setMessages(JSON.parse(savedChat));
       }
+    }
+    // Pre-load voices so they are ready when button is clicked
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.getVoices();
     }
   }, [user]);
 
@@ -69,7 +87,6 @@ export default function ChatInterface() {
         const data = await response.json();
         const chatHistory = data.history || [];
         setFullHistory(chatHistory);
-        // Extract unique user queries for the sidebar
         const userQueries = chatHistory.filter(m => m.sender === 'user').map(m => m.text);
         setHistoryList([...new Set(userQueries)].reverse().slice(0, 15)); 
       }
@@ -83,7 +100,6 @@ export default function ChatInterface() {
   const handleHistoryClick = (itemText) => {
     const startIndex = fullHistory.findIndex(m => m.sender === 'user' && m.text === itemText);
     if (startIndex !== -1) {
-      // Find the user message and the immediate assistant response
       const conversation = [fullHistory[startIndex]];
       let i = startIndex + 1;
       while (i < fullHistory.length && fullHistory[i].sender !== 'user') {
@@ -105,13 +121,9 @@ export default function ChatInterface() {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${currentSession.access_token}` }
       });
-      
       if (!response.ok) throw new Error("Failed to delete from database");
 
-      // Reload from cloud to ensure perfect sync
       await loadFullHistory();
-      
-      // If the deleted item is the currently open chat, clear the chat view
       if (messages.length > 0 && messages[0].text === itemText) {
         setMessages([]);
         sessionStorage.removeItem('activeChat');
@@ -123,10 +135,7 @@ export default function ChatInterface() {
   };
 
   const handleNewChat = () => {
-    setMessages([]); 
-    setAttachment(null); 
-    setInput(''); 
-    setIsDrawerOpen(false);
+    setMessages([]); setAttachment(null); setInput(''); setIsDrawerOpen(false);
     sessionStorage.removeItem('activeChat');
   };
 
@@ -155,7 +164,7 @@ export default function ChatInterface() {
       return;
     }
     const recognition = new SpeechRecognition();
-    recognition.lang = languageCodes[language] || 'hi-IN';
+    recognition.lang = languageCodes[language] || 'en-IN';
     recognition.interimResults = false;
     
     recognition.onstart = () => setIsListening(true);
@@ -168,12 +177,39 @@ export default function ChatInterface() {
     recognition.start();
   };
 
+  // FIX: Advanced TTS function to force Female/Google Voice
   const speakText = (text) => {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       const plainText = text.replace(/<[^>]+>/g, '').replace(/[*#]/g, '');
       const utterance = new SpeechSynthesisUtterance(plainText);
-      utterance.lang = languageCodes[language] || 'hi-IN';
+      
+      const targetLang = languageCodes[language] || 'en-IN';
+      utterance.lang = targetLang;
+      
+      const voices = window.speechSynthesis.getVoices();
+      
+      // 1. Priority: Find Google Female voice for the exact language
+      let bestVoice = voices.find(v => v.lang === targetLang && v.name.includes('Google'));
+      
+      // 2. Fallback: Any female voice for the exact language
+      if (!bestVoice) {
+        bestVoice = voices.find(v => v.lang === targetLang && (v.name.toLowerCase().includes('female')));
+      }
+      
+      // 3. Fallback: Just match the language prefix (e.g., 'hi' for Hindi)
+      if (!bestVoice) {
+        bestVoice = voices.find(v => v.lang.startsWith(targetLang.split('-')[0]));
+      }
+
+      if (bestVoice) {
+        utterance.voice = bestVoice;
+      }
+
+      // Slightly increase pitch to make it sound more natural and feminine
+      utterance.pitch = 1.1;
+      utterance.rate = 0.95;
+
       window.speechSynthesis.speak(utterance);
     }
   };
