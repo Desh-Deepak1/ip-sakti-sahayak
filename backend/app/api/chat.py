@@ -18,19 +18,19 @@ supabase: Client = create_client(
 class ChatRequest(BaseModel):
     query: str
     jurisdiction: Optional[str] = "INDIA"
-    product_category: Optional[str] = "PROPRIETARY_AYURVEDA"
 
 @router.post("/chat")
 async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current_user)):
     try:
         user_query = request.query.strip()
         
-        # 1. AI Intent Classification (Dynamic check for ANY general query)
+        # AGENT 1: Intent & Classification Router
         intent_system_prompt = (
-            "You are an intent classifier. Determine if the user's query is a general conversation, greeting, asking about your identity, "
-            "or casual chat (e.g., 'hi', 'who are you', 'introduce yourself', 'how does this work'). "
-            "OR if it is a domain-specific legal, Intellectual Property, Patents, or Ayurveda query. "
-            "Reply with EXACTLY the word 'GENERAL' or 'LEGAL'. Do not add any other words."
+            "You are the Master Router Agent for IP-SAKTI Sahayak. Analyze the user's query and classify it into EXACTLY ONE of these categories:\n"
+            "1. 'GENERAL': If it's a greeting, casual chat, asking how you work, or unrelated to IP/Ayurveda.\n"
+            "2. 'NEEDS_CLASSIFICATION': If the user is asking about patenting or registering an Ayurvedic product, BUT has NOT explicitly stated if it is a 'Classical Medicine' (textbook based), 'Proprietary Formulation' (new mix), 'Cosmetic', or 'Extract/Phytopharmaceutical'.\n"
+            "3. 'LEGAL_READY': If it is a clear legal/IP query and the product context is either clear or not required for the specific question.\n"
+            "Reply with ONLY the category name. No extra words."
         )
         
         intent_check = await process_llm_request(
@@ -40,14 +40,14 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
             context=[]
         )
         
-        is_general = "GENERAL" in intent_check.upper()
+        intent = intent_check.strip().upper()
+        citations = []
 
-        if is_general:
-            # Dynamic General Response without RAG
+        if "GENERAL" in intent:
+            # Handle General Queries
             general_system_prompt = (
                 "You are IP-SAKTI Sahayak, an expert AI legal assistant for Intellectual Property and Ayurveda regulations. "
-                "The user is asking a general or casual question. Answer politely, naturally, and concisely in 1 to 3 sentences. "
-                "Remind them that you are here to help with IP and Ayurveda legal queries. Do not use complex formatting."
+                "Answer the casual greeting or general question politely and concisely. Remind them you are here for IP and Ayurveda legal queries."
             )
             llm_text = await process_llm_request(
                 task_type="rag_answer",
@@ -55,13 +55,29 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
                 user_prompt=user_query,
                 context=[]
             )
-            citations = []
+            score_data = {"score": 1.0, "rating": "General Chat"}
+            disclaimer = ""
+
+        elif "NEEDS_CLASSIFICATION" in intent:
+            # Handle Missing Product Category (SIH Mandatory Feature)
+            llm_text = (
+                "To give you the most accurate legal guidance, I need to understand your product better. "
+                "Ayurvedic IP laws change based on the category. Could you please clarify if your product is:\n\n"
+                "• **Classical Ayurvedic Medicine:** Formulated exactly as per ancient texts (e.g., Charaka Samhita).\n"
+                "• **Proprietary Ayurvedic Medicine:** A new combination of traditional herbs not mentioned in ancient texts.\n"
+                "• **Phytopharmaceutical:** A highly purified, modern drug derived from plants requiring clinical trials.\n"
+                "• **Cosmetic/Nutraceutical:** Meant for external application or dietary supplement.\n\n"
+                "Please reply with your product category so I can fetch the correct regulations from the Drugs & Cosmetics Act and Patents Act."
+            )
+            score_data = {"score": 1.0, "rating": "System Request"}
+            disclaimer = ""
+
         else:
-            # 2. Execute Context Retrieval for Legal Queries (Full RAG)
+            # Handle LEGAL_READY (Full RAG Execution)
             raw_chunks = await retrieve_evidence(user_query)
             
             system_prompt = (
-                "You are IP-SAKTI Sahayak, an expert AI legal assistant for Ayurveda. "
+                f"You are IP-SAKTI Sahayak, an expert AI legal assistant analyzing IP laws for the {request.jurisdiction} jurisdiction. "
                 "Analyze the user's query strictly based on the provided Context Documents. "
                 "Structure your EXACT response using THESE EXACT bolded headings:\n"
                 "**Preliminary Assessment:**\n"
@@ -82,62 +98,39 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
             if "Error:" in llm_text:
                 raise Exception(llm_text)
 
-            # 3. Extract Dynamic Legal Citations
-            citations = []
+            # Extract Citations
             for chunk in raw_chunks:
                 payload = chunk.get("payload", {})
                 if payload:
-                    act_name = payload.get("act_name") or payload.get("title") or payload.get("document_name") or "Statutory Provision"
+                    act_name = payload.get("act_name") or payload.get("document_name") or "Statutory Provision"
                     section = payload.get("section", "")
-                    source_link = payload.get("source_link") or payload.get("url") or payload.get("link")
-                    
-                    if source_link:
-                        citations.append({
-                            "title": f"{act_name} {section}".strip(),
-                            "type": "Statute / Document",
-                            "url": source_link
-                        })
+                    source_link = payload.get("source_link") or payload.get("url") or "https://ipindia.gov.in"
+                    citations.append({"title": f"{act_name} {section}".strip(), "type": "Statute / Official Document", "url": source_link})
 
             if not citations:
-                citations = [{
-                    "title": "Indian Intellectual Property Portal",
-                    "type": "Official Registry",
-                    "url": "https://ipindia.gov.in"
-                }]
+                citations = [{"title": "Indian Intellectual Property Portal", "type": "Official Registry", "url": "https://ipindia.gov.in"}]
 
-            # Deduplicate citations
             unique_citations = list({c["title"]: c for c in citations}.values())
             citations = unique_citations
+            score_data = {"score": 0.95, "rating": "High Confidence"}
+            disclaimer = "IP-SAKTI Sahayak provides legal information based on trained datasets, not professional legal advice."
 
-        # 4. Upsert user profile & save chat history
+        # Database Logging
         try:
             user_info = supabase.auth.admin.get_user_by_id(user_id)
             user_email = user_info.user.email
         except Exception:
             user_email = f"user_{user_id[:8]}@ip-sakti.com"
 
-        supabase.table("profiles").upsert({
-            "id": user_id,
-            "email": user_email
-        }).execute()
-
-        supabase.table("chat_sessions").insert({
-            "user_id": user_id,
-            "message_content": user_query,
-            "role": "user"
-        }).execute()
-
-        supabase.table("chat_sessions").insert({
-            "user_id": user_id,
-            "message_content": llm_text,
-            "role": "assistant"
-        }).execute()
+        supabase.table("profiles").upsert({"id": user_id, "email": user_email}).execute()
+        supabase.table("chat_sessions").insert({"user_id": user_id, "message_content": user_query, "role": "user"}).execute()
+        supabase.table("chat_sessions").insert({"user_id": user_id, "message_content": llm_text, "role": "assistant"}).execute()
 
         return {
             "response": llm_text,
-            "evidence_score": {"score": 1.0 if is_general else 0.95, "rating": "General" if is_general else "High Confidence"},
+            "evidence_score": score_data,
             "citations": citations,
-            "disclaimer": "" if is_general else "IP-SAKTI Sahayak can make mistakes. Verify important information."
+            "disclaimer": disclaimer
         }
 
     except Exception as e:
@@ -148,21 +141,8 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
 @router.get("/history")
 async def get_chat_history(user_id: str = Depends(get_current_user)):
     try:
-        response = supabase.table("chat_sessions") \
-            .select("message_content, role, created_at") \
-            .eq("user_id", user_id) \
-            .order("created_at", desc=False) \
-            .execute()
-        
-        formatted_history = []
-        for row in response.data:
-            formatted_history.append({
-                "sender": "assistant" if row["role"] == "assistant" else "user",
-                "text": row["message_content"],
-                "timestamp": row["created_at"]
-            })
-            
-        return {"history": formatted_history}
+        response = supabase.table("chat_sessions").select("message_content, role, created_at").eq("user_id", user_id).order("created_at", desc=False).execute()
+        return {"history": [{"sender": "assistant" if row["role"] == "assistant" else "user", "text": row["message_content"], "timestamp": row["created_at"]} for row in response.data]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"History Retrieval Failed: {str(e)}")
 
@@ -170,6 +150,6 @@ async def get_chat_history(user_id: str = Depends(get_current_user)):
 async def delete_chat_history(query: str, user_id: str = Depends(get_current_user)):
     try:
         supabase.table("chat_sessions").delete().eq("user_id", user_id).eq("message_content", query).execute()
-        return {"status": "success", "message": "Chat deleted permanently from database"}
+        return {"status": "success", "message": "Chat deleted permanently"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
