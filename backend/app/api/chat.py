@@ -23,21 +23,42 @@ class ChatRequest(BaseModel):
 @router.post("/chat")
 async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current_user)):
     try:
-        user_query_lower = request.query.strip().lower()
+        user_query = request.query.strip()
         
-        # 1. Quick General Query Intent Check (Saves API tokens)
-        general_triggers = ["hi", "hello", "hey", "who are you", "how are you", "gm", "good morning", "sup", "thanks", "thank you"]
-        is_general = user_query_lower in general_triggers or (len(user_query_lower.split()) <= 2 and not any(k in user_query_lower for k in ["act", "patent", "drug", "law", "ip", "ayurveda", "formulation", "trademark", "copyright", "design"]))
+        # 1. AI Intent Classification (Dynamic check for ANY general query)
+        intent_system_prompt = (
+            "You are an intent classifier. Determine if the user's query is a general conversation, greeting, asking about your identity, "
+            "or casual chat (e.g., 'hi', 'who are you', 'introduce yourself', 'how does this work'). "
+            "OR if it is a domain-specific legal, Intellectual Property, Patents, or Ayurveda query. "
+            "Reply with EXACTLY the word 'GENERAL' or 'LEGAL'. Do not add any other words."
+        )
+        
+        intent_check = await process_llm_request(
+            task_type="rag_answer", 
+            system_prompt=intent_system_prompt,
+            user_prompt=user_query,
+            context=[]
+        )
+        
+        is_general = "GENERAL" in intent_check.upper()
 
         if is_general:
-            llm_text = (
-                "Hello! I am IP-SAKTI Sahayak, your expert AI legal assistant for Intellectual Property and Ayurveda regulations. "
-                "The question you asked is not related to legal or regulatory queries. Would you like to ask a legal query regarding IP, patents, or Ayurveda laws?"
+            # Dynamic General Response without RAG
+            general_system_prompt = (
+                "You are IP-SAKTI Sahayak, an expert AI legal assistant for Intellectual Property and Ayurveda regulations. "
+                "The user is asking a general or casual question. Answer politely, naturally, and concisely in 1 to 3 sentences. "
+                "Remind them that you are here to help with IP and Ayurveda legal queries. Do not use complex formatting."
+            )
+            llm_text = await process_llm_request(
+                task_type="rag_answer",
+                system_prompt=general_system_prompt,
+                user_prompt=user_query,
+                context=[]
             )
             citations = []
         else:
-            # 2. Execute Context Retrieval for Legal Queries
-            raw_chunks = await retrieve_evidence(request.query)
+            # 2. Execute Context Retrieval for Legal Queries (Full RAG)
+            raw_chunks = await retrieve_evidence(user_query)
             
             system_prompt = (
                 "You are IP-SAKTI Sahayak, an expert AI legal assistant for Ayurveda. "
@@ -54,14 +75,14 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
             llm_text = await process_llm_request(
                 task_type="rag_answer",
                 system_prompt=system_prompt,
-                user_prompt=request.query,
+                user_prompt=user_query,
                 context=raw_chunks
             )
 
             if "Error:" in llm_text:
                 raise Exception(llm_text)
 
-            # 3. Extract Dynamic Legal Citations from retrieved chunks
+            # 3. Extract Dynamic Legal Citations
             citations = []
             for chunk in raw_chunks:
                 payload = chunk.get("payload", {})
@@ -77,18 +98,18 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
                             "url": source_link
                         })
 
-            # Fallback if chunks don't have explicit links
-            if not citations and not is_general:
+            if not citations:
                 citations = [{
                     "title": "Indian Intellectual Property Portal",
                     "type": "Official Registry",
                     "url": "https://ipindia.gov.in"
                 }]
 
+            # Deduplicate citations
             unique_citations = list({c["title"]: c for c in citations}.values())
             citations = unique_citations
 
-        # 4. Upsert user profile & ALWAYS save chat history (both user query and response)
+        # 4. Upsert user profile & save chat history
         try:
             user_info = supabase.auth.admin.get_user_by_id(user_id)
             user_email = user_info.user.email
@@ -102,7 +123,7 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
 
         supabase.table("chat_sessions").insert({
             "user_id": user_id,
-            "message_content": request.query,
+            "message_content": user_query,
             "role": "user"
         }).execute()
 

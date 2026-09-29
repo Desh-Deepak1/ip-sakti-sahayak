@@ -335,7 +335,8 @@ export default function ChatInterface() {
                       <img src="/logo.png" className="w-full h-full object-cover rounded-full" alt="bot" />
                     </div>
                   )}
-                  <div className={`max-w-[88%] sm:max-w-[80%] rounded-[1.2rem] sm:rounded-[1.5rem] px-4 sm:px-6 py-3 sm:py-5 text-xs sm:text-[15px] leading-relaxed shadow-lg ${msg.sender === 'user' ? 'bg-gray-100 text-gray-900 border border-gray-200 rounded-tr-sm' : 'bg-white/95 backdrop-blur-sm border border-purple-100/50 text-gray-800 rounded-tl-sm'}`}>
+                  {/* ADDED text-left HERE SO ALL TEXT IS ALWAYS LEFT-ALIGNED */}
+                  <div className={`max-w-[88%] sm:max-w-[80%] rounded-[1.2rem] sm:rounded-[1.5rem] px-4 sm:px-6 py-3 sm:py-5 text-xs sm:text-[15px] leading-relaxed shadow-lg text-left ${msg.sender === 'user' ? 'bg-gray-100 text-gray-900 border border-gray-200 rounded-tr-sm' : 'bg-white/95 backdrop-blur-sm border border-purple-100/50 text-gray-800 rounded-tl-sm'}`}>
                     {msg.file && (
                       <div className={`mb-2 sm:mb-3 inline-flex items-center gap-2 px-2.5 py-1 rounded-lg text-[10px] sm:text-xs font-bold ${msg.sender === 'user' ? 'bg-white text-gray-800 shadow-sm' : 'bg-purple-50 text-purple-800'}`}>
                         <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
@@ -346,11 +347,10 @@ export default function ChatInterface() {
                       <div className="whitespace-pre-wrap font-medium">{msg.text}</div>
                     ) : (
                       <>
-                        <div className="whitespace-pre-wrap font-medium" dangerouslySetInnerHTML={formatAIResponse(msg.text)} />
+                        <div className="whitespace-pre-wrap font-medium text-left" dangerouslySetInnerHTML={formatAIResponse(msg.text)} />
                         
-                        {/* DYNAMIC SOURCES SECTION */}
                         {msg.citations && msg.citations.length > 0 && (
-                          <div className="mt-4 pt-3 border-t border-purple-100">
+                          <div className="mt-4 pt-3 border-t border-purple-100 text-left">
                             <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Sources & References</div>
                             <div className="flex flex-wrap gap-2">
                               {msg.citations.map((cite, cIdx) => (
@@ -393,7 +393,7 @@ export default function ChatInterface() {
             <div className="w-full max-w-3xl bg-white/95 backdrop-blur-xl border border-gray-200 rounded-full shadow-2xl p-1.5 sm:p-2 flex items-center focus-within:border-purple-300 transition-all duration-300">
               <label className="cursor-pointer p-2 text-gray-500 hover:text-purple-600 transition-colors ml-1 rounded-full hover:bg-purple-50">
                 <input type="file" className="hidden" onChange={(e) => setAttachment(e.target.files[0])} />
-                <svg className="w-5 h-5 sm:w-6 sm:h-6 transform rotate-45" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2_2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+                <svg className="w-5 h-5 sm:w-6 sm:h-6 transform rotate-45" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
               </label>
               {attachment && <span className="ml-1 text-xs font-bold text-purple-800 bg-purple-100 px-2.5 py-1 rounded-lg truncate max-w-[90px] shadow-sm">{attachment.name}</span>}
               
