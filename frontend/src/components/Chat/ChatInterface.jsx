@@ -35,7 +35,7 @@ export default function ChatInterface() {
   const [fullHistory, setFullHistory] = useState([]); 
   const [input, setInput] = useState('');
   const [jurisdiction, setJurisdiction] = useState('INDIA');
-  const [language, setLanguage] = useState('English'); // FIX: Wapas English default kar diya
+  const [language, setLanguage] = useState('English');
   const [loading, setLoading] = useState(false);
   const [attachment, setAttachment] = useState(null);
   const [isListening, setIsListening] = useState(false);
@@ -66,10 +66,6 @@ export default function ChatInterface() {
       if (savedChat) {
         setMessages(JSON.parse(savedChat));
       }
-    }
-    // Pre-load voices so they are ready when button is clicked
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.getVoices();
     }
   }, [user]);
 
@@ -177,39 +173,23 @@ export default function ChatInterface() {
     recognition.start();
   };
 
-  // FIX: Advanced TTS function to force Female/Google Voice
+  // RESTORED PERFECT TTS FUNCTION (Native language routing with soft pitch)
   const speakText = (text) => {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
+      // Remove HTML tags and markdown symbols before reading
       const plainText = text.replace(/<[^>]+>/g, '').replace(/[*#]/g, '');
       const utterance = new SpeechSynthesisUtterance(plainText);
       
-      const targetLang = languageCodes[language] || 'en-IN';
-      utterance.lang = targetLang;
+      // Tell browser exactly which language accent to use based on the dropdown
+      utterance.lang = languageCodes[language] || 'en-IN';
       
-      const voices = window.speechSynthesis.getVoices();
-      
-      // 1. Priority: Find Google Female voice for the exact language
-      let bestVoice = voices.find(v => v.lang === targetLang && v.name.includes('Google'));
-      
-      // 2. Fallback: Any female voice for the exact language
-      if (!bestVoice) {
-        bestVoice = voices.find(v => v.lang === targetLang && (v.name.toLowerCase().includes('female')));
-      }
-      
-      // 3. Fallback: Just match the language prefix (e.g., 'hi' for Hindi)
-      if (!bestVoice) {
-        bestVoice = voices.find(v => v.lang.startsWith(targetLang.split('-')[0]));
-      }
-
-      if (bestVoice) {
-        utterance.voice = bestVoice;
-      }
-
-      // Slightly increase pitch to make it sound more natural and feminine
+      // Pitch set to 1.1 forces a slightly higher (feminine/softer) tone automatically
+      // without breaking the native language voice mapping.
       utterance.pitch = 1.1;
       utterance.rate = 0.95;
 
+      // Browser automatically assigns the best default voice for this language
       window.speechSynthesis.speak(utterance);
     }
   };
