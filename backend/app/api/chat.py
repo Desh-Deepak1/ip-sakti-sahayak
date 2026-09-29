@@ -1,4 +1,5 @@
 import os
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -7,7 +8,6 @@ from supabase import create_client, Client
 from app.api.deps import get_current_user
 from app.rag.retriever import retrieve_evidence
 from app.ai.gateway import process_llm_request
-
 from app.providers.bhashini import translate_with_bhashini
 
 router = APIRouter(prefix="/api/v1", tags=["Chat"])
@@ -22,6 +22,73 @@ class ChatRequest(BaseModel):
     jurisdiction: Optional[str] = "INDIA"
     language: Optional[str] = "English"
 
+# NEW: Request model for Voice (TTS)
+class TTSRequest(BaseModel):
+    text: str
+    language: str = "English"
+
+# ==========================================
+# 1. BHASHINI TEXT-TO-SPEECH (TTS) ENDPOINT
+# ==========================================
+@router.post("/tts")
+async def generate_speech(request: TTSRequest):
+    bhashini_lang_codes = {
+        "ASSAMESE": "as", "BENGALI": "bn", "BODO": "brx", "DOGRI": "doi", 
+        "GUJARATI": "gu", "HINDI": "hi", "KANNADA": "kn", "KASHMIRI": "ks", 
+        "KONKANI": "gom", "MAITHILI": "mai", "MALAYALAM": "ml", "MANIPURI": "mni", 
+        "MARATHI": "mr", "NEPALI": "ne", "ODIA": "or", "PUNJABI": "pa", 
+        "SANSKRIT": "sa", "SANTALI": "sat", "SINDHI": "sd", "TAMIL": "ta", 
+        "TELUGU": "te", "URDU": "ur", "ENGLISH": "en"
+    }
+    
+    target_code = bhashini_lang_codes.get(request.language.upper(), "hi")
+    
+    api_key = os.getenv("BHASHINI_API_KEY")
+    user_id = os.getenv("BHASHINI_USER_ID")
+    bhashini_url = os.getenv("BHASHINI_URL", "https://dhruva-api.bhashini.gov.in/services/inference/pipeline")
+    
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Bhashini credentials missing in .env")
+
+    # Bhashini TTS Payload (Strictly set to Female Voice)
+    payload = {
+        "pipelineTasks": [
+            {
+                "taskType": "tts",
+                "config": {
+                    "language": {"sourceLanguage": target_code},
+                    "gender": "female"  # Strict single female voice
+                }
+            }
+        ],
+        "inputData": {
+            "input": [{"source": request.text}]
+        }
+    }
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": api_key,
+        "userID": user_id
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(bhashini_url, json=payload, headers=headers, timeout=15.0)
+            resp.raise_for_status()
+            data = resp.json()
+            # Extract Base64 Audio String
+            audio_base64 = data["pipelineResponse"][0]["audio"][0]["audioContent"]
+            return {"audio": audio_base64}
+            
+    except Exception as e:
+        print(f"Bhashini TTS Error: {e}")
+        raise HTTPException(status_code=500, detail="Voice generation failed")
+
+
+# ==========================================
+# 2. CHATBOT RAG & TRANSLATION ENDPOINT
+# ==========================================
 @router.post("/chat")
 async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current_user)):
     try:
@@ -29,7 +96,6 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
         requested_language = request.language
         jurisdiction_selection = request.jurisdiction.upper()
         
-        # AGENT 1: Intent & Classification Router
         intent_system_prompt = (
             "You are the Master Router Agent for IP-SAKTI Sahayak. Classify the user's query into EXACTLY ONE category:\n"
             "1. 'GENERAL': Greeting, casual chat, or unrelated to IP/Ayurveda.\n"
@@ -119,7 +185,6 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
             score_data = {"score": 0.95, "rating": "High Confidence"}
             disclaimer = "IP-SAKTI Sahayak provides legal information based on trained datasets, not professional legal advice."
 
-        # --- MULTILINGUAL TRANSLATION (All 22 Indian Scheduled Languages) ---
         bhashini_lang_codes = {
             "ASSAMESE": "as", "BENGALI": "bn", "BODO": "brx", "DOGRI": "doi", 
             "GUJARATI": "gu", "HINDI": "hi", "KANNADA": "kn", "KASHMIRI": "ks", 
@@ -136,7 +201,6 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
             if disclaimer:
                 disclaimer = await translate_with_bhashini(disclaimer, source_lang="en", target_lang=target_code)
 
-        # Database Logging
         try:
             user_info = supabase.auth.admin.get_user_by_id(user_id)
             user_email = user_info.user.email
@@ -162,22 +226,8 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
 @router.get("/history")
 async def get_chat_history(user_id: str = Depends(get_current_user)):
     try:
-        # Sort by creation time to reconstruct the whole flow
-        response = supabase.table("chat_sessions") \
-            .select("message_content, role, created_at") \
-            .eq("user_id", user_id) \
-            .order("created_at", desc=False) \
-            .execute()
-        
-        formatted_history = []
-        for row in response.data:
-            formatted_history.append({
-                "sender": "assistant" if row["role"] == "assistant" else "user",
-                "text": row["message_content"],
-                "timestamp": row["created_at"]
-            })
-            
-        return {"history": formatted_history}
+        response = supabase.table("chat_sessions").select("message_content, role, created_at").eq("user_id", user_id).order("created_at", desc=False).execute()
+        return {"history": [{"sender": "assistant" if row["role"] == "assistant" else "user", "text": row["message_content"], "timestamp": row["created_at"]} for row in response.data]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"History Retrieval Failed: {str(e)}")
 

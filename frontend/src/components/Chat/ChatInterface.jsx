@@ -3,29 +3,12 @@ import { AppContext } from '../../context/AppProvider';
 import { supabase } from '../../supabaseClient';
 
 const languageCodes = {
-  'English': 'en-IN',
-  'Assamese': 'as-IN',
-  'Bengali': 'bn-IN',
-  'Bodo': 'brx-IN',
-  'Dogri': 'doi-IN',
-  'Gujarati': 'gu-IN',
-  'Hindi': 'hi-IN',
-  'Kannada': 'kn-IN',
-  'Kashmiri': 'ks-IN',
-  'Konkani': 'gom-IN',
-  'Maithili': 'mai-IN',
-  'Malayalam': 'ml-IN',
-  'Manipuri': 'mni-IN',
-  'Marathi': 'mr-IN',
-  'Nepali': 'ne-NP',
-  'Odia': 'or-IN',
-  'Punjabi': 'pa-IN',
-  'Sanskrit': 'sa-IN',
-  'Santali': 'sat-IN',
-  'Sindhi': 'sd-IN',
-  'Tamil': 'ta-IN',
-  'Telugu': 'te-IN',
-  'Urdu': 'ur-IN'
+  'English': 'en-IN', 'Assamese': 'as-IN', 'Bengali': 'bn-IN', 'Bodo': 'brx-IN',
+  'Dogri': 'doi-IN', 'Gujarati': 'gu-IN', 'Hindi': 'hi-IN', 'Kannada': 'kn-IN',
+  'Kashmiri': 'ks-IN', 'Konkani': 'gom-IN', 'Maithili': 'mai-IN', 'Malayalam': 'ml-IN',
+  'Manipuri': 'mni-IN', 'Marathi': 'mr-IN', 'Nepali': 'ne-NP', 'Odia': 'or-IN',
+  'Punjabi': 'pa-IN', 'Sanskrit': 'sa-IN', 'Santali': 'sat-IN', 'Sindhi': 'sd-IN',
+  'Tamil': 'ta-IN', 'Telugu': 'te-IN', 'Urdu': 'ur-IN'
 };
 
 export default function ChatInterface() {
@@ -39,6 +22,7 @@ export default function ChatInterface() {
   const [loading, setLoading] = useState(false);
   const [attachment, setAttachment] = useState(null);
   const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false); // To show loading state during voice fetch
   
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -173,24 +157,38 @@ export default function ChatInterface() {
     recognition.start();
   };
 
-  // RESTORED PERFECT TTS FUNCTION (Native language routing with soft pitch)
-  const speakText = (text) => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      // Remove HTML tags and markdown symbols before reading
+  // BHASHINI API TEXT-TO-SPEECH (Plays the exact audio returned by Backend)
+  const speakText = async (text) => {
+    if (isSpeaking) return; // Prevent multiple clicks
+    
+    try {
+      setIsSpeaking(true);
       const plainText = text.replace(/<[^>]+>/g, '').replace(/[*#]/g, '');
-      const utterance = new SpeechSynthesisUtterance(plainText);
       
-      // Tell browser exactly which language accent to use based on the dropdown
-      utterance.lang = languageCodes[language] || 'en-IN';
-      
-      // Pitch set to 1.1 forces a slightly higher (feminine/softer) tone automatically
-      // without breaking the native language voice mapping.
-      utterance.pitch = 1.1;
-      utterance.rate = 0.95;
+      const response = await fetch('https://sahayak-ai-xkx9.onrender.com/api/v1/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: plainText, language: language })
+      });
 
-      // Browser automatically assigns the best default voice for this language
-      window.speechSynthesis.speak(utterance);
+      if (!response.ok) throw new Error("TTS Engine Failed");
+      
+      const data = await response.json();
+      if (data.audio) {
+        // Play the base64 audio exactly as Bhashini generated it
+        const audio = new Audio(`data:audio/wav;base64,${data.audio}`);
+        audio.play();
+        
+        audio.onended = () => {
+          setIsSpeaking(false);
+        };
+      } else {
+        setIsSpeaking(false);
+      }
+    } catch (err) {
+      console.error("Audio playback error:", err);
+      setIsSpeaking(false);
+      alert("Voice generation is currently unavailable for this text.");
     }
   };
 
@@ -380,7 +378,7 @@ export default function ChatInterface() {
                   <div className={`max-w-[88%] sm:max-w-[80%] rounded-[1.2rem] sm:rounded-[1.5rem] px-4 sm:px-6 py-3 sm:py-5 text-xs sm:text-[15px] leading-relaxed shadow-lg text-left break-words relative group ${msg.sender === 'user' ? 'bg-gray-100 text-gray-900 border border-gray-200 rounded-tr-sm' : 'bg-white/95 backdrop-blur-sm border border-purple-100/50 text-gray-800 rounded-tl-sm'}`}>
                     
                     {msg.sender === 'assistant' && (
-                      <button onClick={() => speakText(msg.text)} className="absolute top-3 right-3 text-gray-400 hover:text-purple-600 opacity-0 group-hover:opacity-100 transition-opacity" title="Read Aloud">
+                      <button onClick={() => speakText(msg.text)} className={`absolute top-3 right-3 transition-opacity ${isSpeaking ? 'text-purple-600 opacity-100 animate-pulse' : 'text-gray-400 opacity-0 group-hover:opacity-100 hover:text-purple-600'}`} title="Read Aloud">
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/></svg>
                       </button>
                     )}
