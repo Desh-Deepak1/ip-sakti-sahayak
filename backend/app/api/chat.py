@@ -8,7 +8,6 @@ from app.api.deps import get_current_user
 from app.rag.retriever import retrieve_evidence
 from app.ai.gateway import process_llm_request
 
-# NEW: Bhashini translation function import karo (Make sure backend/app/providers/bhashini.py exists)
 from app.providers.bhashini import translate_with_bhashini
 
 router = APIRouter(prefix="/api/v1", tags=["Chat"])
@@ -69,10 +68,8 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
             disclaimer = ""
 
         else:
-            # RAG Execution
             raw_chunks = await retrieve_evidence(user_query)
             
-            # --- STRICT JURISDICTION GUARDRAILS (SIH REQUIREMENT) ---
             if jurisdiction_selection == "INTERNATIONAL":
                 jurisdiction_rules = (
                     "CRITICAL GUARDRAIL: The user selected INTERNATIONAL jurisdiction. "
@@ -122,10 +119,14 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
             score_data = {"score": 0.95, "rating": "High Confidence"}
             disclaimer = "IP-SAKTI Sahayak provides legal information based on trained datasets, not professional legal advice."
 
-        # --- MULTILINGUAL TRANSLATION (Runs for ALL responses based on Dropdown) ---
+        # --- MULTILINGUAL TRANSLATION (All 22 Indian Scheduled Languages) ---
         bhashini_lang_codes = {
-            "HINDI": "hi", "MARATHI": "mr", "BENGALI": "bn", "TAMIL": "ta", 
-            "TELUGU": "te", "GUJARATI": "gu", "KANNADA": "kn", "MALAYALAM": "ml", "PUNJABI": "pa"
+            "ASSAMESE": "as", "BENGALI": "bn", "BODO": "brx", "DOGRI": "doi", 
+            "GUJARATI": "gu", "HINDI": "hi", "KANNADA": "kn", "KASHMIRI": "ks", 
+            "KONKANI": "gom", "MAITHILI": "mai", "MALAYALAM": "ml", "MANIPURI": "mni", 
+            "MARATHI": "mr", "NEPALI": "ne", "ODIA": "or", "PUNJABI": "pa", 
+            "SANSKRIT": "sa", "SANTALI": "sat", "SINDHI": "sd", "TAMIL": "ta", 
+            "TELUGU": "te", "URDU": "ur"
         }
         
         req_lang_upper = requested_language.upper()

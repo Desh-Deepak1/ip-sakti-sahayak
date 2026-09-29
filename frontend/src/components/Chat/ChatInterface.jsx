@@ -2,11 +2,31 @@ import { useState, useRef, useEffect, useContext } from 'react';
 import { AppContext } from '../../context/AppProvider';
 import { supabase } from '../../supabaseClient';
 
-// Language codes for Voice Recognition & TTS
+// ALL 22 SCHEDULED INDIAN LANGUAGES + ENGLISH
 const languageCodes = {
-  'English': 'en-IN', 'Hindi': 'hi-IN', 'Marathi': 'mr-IN', 'Bengali': 'bn-IN',
-  'Tamil': 'ta-IN', 'Telugu': 'te-IN', 'Gujarati': 'gu-IN', 'Kannada': 'kn-IN',
-  'Malayalam': 'ml-IN', 'Punjabi': 'pa-IN'
+  'English': 'en-IN',
+  'Assamese': 'as-IN',
+  'Bengali': 'bn-IN',
+  'Bodo': 'brx-IN',
+  'Dogri': 'doi-IN',
+  'Gujarati': 'gu-IN',
+  'Hindi': 'hi-IN',
+  'Kannada': 'kn-IN',
+  'Kashmiri': 'ks-IN',
+  'Konkani': 'gom-IN',
+  'Maithili': 'mai-IN',
+  'Malayalam': 'ml-IN',
+  'Manipuri': 'mni-IN',
+  'Marathi': 'mr-IN',
+  'Nepali': 'ne-NP',
+  'Odia': 'or-IN',
+  'Punjabi': 'pa-IN',
+  'Sanskrit': 'sa-IN',
+  'Santali': 'sat-IN',
+  'Sindhi': 'sd-IN',
+  'Tamil': 'ta-IN',
+  'Telugu': 'te-IN',
+  'Urdu': 'ur-IN'
 };
 
 export default function ChatInterface() {
@@ -16,7 +36,7 @@ export default function ChatInterface() {
   const [fullHistory, setFullHistory] = useState([]); 
   const [input, setInput] = useState('');
   const [jurisdiction, setJurisdiction] = useState('INDIA');
-  const [language, setLanguage] = useState('English');
+  const [language, setLanguage] = useState('Hindi'); // Default thoda badal diya for India
   const [loading, setLoading] = useState(false);
   const [attachment, setAttachment] = useState(null);
   const [isListening, setIsListening] = useState(false);
@@ -296,11 +316,11 @@ export default function ChatInterface() {
           </div>
           
           <div className="flex items-center gap-2 sm:gap-4">
-            {/* NEW VISIBLE LANGUAGE DROPDOWN TO THE LEFT OF TOGGLE */}
+            {/* EXPANDED LANGUAGE DROPDOWN */}
             <select 
               value={language} 
               onChange={(e) => setLanguage(e.target.value)} 
-              className="bg-white border border-purple-200 text-purple-900 text-xs font-bold rounded-full px-3 py-1.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-400 cursor-pointer"
+              className="bg-white border border-purple-200 text-purple-900 text-[10px] sm:text-xs font-bold rounded-full px-2 sm:px-3 py-1.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-400 cursor-pointer"
               title="Select Language for Chat and Voice"
             >
               {Object.keys(languageCodes).map(lang => (
@@ -339,7 +359,6 @@ export default function ChatInterface() {
                   )}
                   <div className={`max-w-[88%] sm:max-w-[80%] rounded-[1.2rem] sm:rounded-[1.5rem] px-4 sm:px-6 py-3 sm:py-5 text-xs sm:text-[15px] leading-relaxed shadow-lg text-left break-words relative group ${msg.sender === 'user' ? 'bg-gray-100 text-gray-900 border border-gray-200 rounded-tr-sm' : 'bg-white/95 backdrop-blur-sm border border-purple-100/50 text-gray-800 rounded-tl-sm'}`}>
                     
-                    {/* TTS Speaker Icon for Assistant Messages */}
                     {msg.sender === 'assistant' && (
                       <button onClick={() => speakText(msg.text)} className="absolute top-3 right-3 text-gray-400 hover:text-purple-600 opacity-0 group-hover:opacity-100 transition-opacity" title="Read Aloud">
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/></svg>
@@ -404,7 +423,6 @@ export default function ChatInterface() {
             
             <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Ask anything in ${language}...`} className="flex-1 px-3 text-sm sm:text-[16px] text-gray-900 font-medium focus:outline-none bg-transparent placeholder-gray-400" />
             
-            {/* MIC BUTTON */}
             <button type="button" onClick={toggleListening} className={`p-2 mr-1 rounded-full transition-colors ${isListening ? 'bg-red-100 text-red-600 animate-pulse' : 'text-gray-500 hover:bg-purple-50 hover:text-purple-600'}`} title="Speak">
               <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
             </button>
