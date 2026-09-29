@@ -162,8 +162,22 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
 @router.get("/history")
 async def get_chat_history(user_id: str = Depends(get_current_user)):
     try:
-        response = supabase.table("chat_sessions").select("message_content, role, created_at").eq("user_id", user_id).order("created_at", desc=False).execute()
-        return {"history": [{"sender": "assistant" if row["role"] == "assistant" else "user", "text": row["message_content"], "timestamp": row["created_at"]} for row in response.data]}
+        # Sort by creation time to reconstruct the whole flow
+        response = supabase.table("chat_sessions") \
+            .select("message_content, role, created_at") \
+            .eq("user_id", user_id) \
+            .order("created_at", desc=False) \
+            .execute()
+        
+        formatted_history = []
+        for row in response.data:
+            formatted_history.append({
+                "sender": "assistant" if row["role"] == "assistant" else "user",
+                "text": row["message_content"],
+                "timestamp": row["created_at"]
+            })
+            
+        return {"history": formatted_history}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"History Retrieval Failed: {str(e)}")
 

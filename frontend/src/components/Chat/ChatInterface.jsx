@@ -2,31 +2,13 @@ import { useState, useRef, useEffect, useContext } from 'react';
 import { AppContext } from '../../context/AppProvider';
 import { supabase } from '../../supabaseClient';
 
-// ALL 22 SCHEDULED INDIAN LANGUAGES + ENGLISH
 const languageCodes = {
-  'English': 'en-IN',
-  'Assamese': 'as-IN',
-  'Bengali': 'bn-IN',
-  'Bodo': 'brx-IN',
-  'Dogri': 'doi-IN',
-  'Gujarati': 'gu-IN',
-  'Hindi': 'hi-IN',
-  'Kannada': 'kn-IN',
-  'Kashmiri': 'ks-IN',
-  'Konkani': 'gom-IN',
-  'Maithili': 'mai-IN',
-  'Malayalam': 'ml-IN',
-  'Manipuri': 'mni-IN',
-  'Marathi': 'mr-IN',
-  'Nepali': 'ne-NP',
-  'Odia': 'or-IN',
-  'Punjabi': 'pa-IN',
-  'Sanskrit': 'sa-IN',
-  'Santali': 'sat-IN',
-  'Sindhi': 'sd-IN',
-  'Tamil': 'ta-IN',
-  'Telugu': 'te-IN',
-  'Urdu': 'ur-IN'
+  'English': 'en-IN', 'Assamese': 'as-IN', 'Bengali': 'bn-IN', 'Bodo': 'brx-IN',
+  'Dogri': 'doi-IN', 'Gujarati': 'gu-IN', 'Hindi': 'hi-IN', 'Kannada': 'kn-IN',
+  'Kashmiri': 'ks-IN', 'Konkani': 'gom-IN', 'Maithili': 'mai-IN', 'Malayalam': 'ml-IN',
+  'Manipuri': 'mni-IN', 'Marathi': 'mr-IN', 'Nepali': 'ne-NP', 'Odia': 'or-IN',
+  'Punjabi': 'pa-IN', 'Sanskrit': 'sa-IN', 'Santali': 'sat-IN', 'Sindhi': 'sd-IN',
+  'Tamil': 'ta-IN', 'Telugu': 'te-IN', 'Urdu': 'ur-IN'
 };
 
 export default function ChatInterface() {
@@ -36,7 +18,7 @@ export default function ChatInterface() {
   const [fullHistory, setFullHistory] = useState([]); 
   const [input, setInput] = useState('');
   const [jurisdiction, setJurisdiction] = useState('INDIA');
-  const [language, setLanguage] = useState('Hindi'); // Default thoda badal diya for India
+  const [language, setLanguage] = useState('Hindi');
   const [loading, setLoading] = useState(false);
   const [attachment, setAttachment] = useState(null);
   const [isListening, setIsListening] = useState(false);
@@ -48,8 +30,15 @@ export default function ChatInterface() {
   
   const messagesEndRef = useRef(null);
   
+  // Save/Restore Active Chat on Refresh
   useEffect(() => { 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); 
+    // Persist active messages to session storage so refresh doesn't wipe screen
+    if (messages.length > 0) {
+      sessionStorage.setItem('activeChat', JSON.stringify(messages));
+    } else {
+      sessionStorage.removeItem('activeChat');
+    }
   }, [messages, loading]);
 
   useEffect(() => {
@@ -58,6 +47,11 @@ export default function ChatInterface() {
         name: user.user_metadata?.name || '',
         username: user.user_metadata?.username || user.email?.split('@')[0] || 'User'
       });
+      // Load any active chat from session storage if it exists
+      const savedChat = sessionStorage.getItem('activeChat');
+      if (savedChat) {
+        setMessages(JSON.parse(savedChat));
+      }
     }
   }, [user]);
 
@@ -75,6 +69,7 @@ export default function ChatInterface() {
         const data = await response.json();
         const chatHistory = data.history || [];
         setFullHistory(chatHistory);
+        // Extract unique user queries for the sidebar
         const userQueries = chatHistory.filter(m => m.sender === 'user').map(m => m.text);
         setHistoryList([...new Set(userQueries)].reverse().slice(0, 15)); 
       }
@@ -88,6 +83,7 @@ export default function ChatInterface() {
   const handleHistoryClick = (itemText) => {
     const startIndex = fullHistory.findIndex(m => m.sender === 'user' && m.text === itemText);
     if (startIndex !== -1) {
+      // Find the user message and the immediate assistant response
       const conversation = [fullHistory[startIndex]];
       let i = startIndex + 1;
       while (i < fullHistory.length && fullHistory[i].sender !== 'user') {
@@ -109,11 +105,17 @@ export default function ChatInterface() {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${currentSession.access_token}` }
       });
+      
       if (!response.ok) throw new Error("Failed to delete from database");
 
-      setFullHistory(prev => prev.filter(m => m.text !== itemText));
-      setHistoryList(prev => prev.filter(item => item !== itemText));
-      if (messages.length > 0 && messages[0].text === itemText) setMessages([]);
+      // Reload from cloud to ensure perfect sync
+      await loadFullHistory();
+      
+      // If the deleted item is the currently open chat, clear the chat view
+      if (messages.length > 0 && messages[0].text === itemText) {
+        setMessages([]);
+        sessionStorage.removeItem('activeChat');
+      }
     } catch (error) {
       console.error(error);
       alert("Could not delete chat permanently.");
@@ -121,12 +123,17 @@ export default function ChatInterface() {
   };
 
   const handleNewChat = () => {
-    setMessages([]); setAttachment(null); setInput(''); setIsDrawerOpen(false);
+    setMessages([]); 
+    setAttachment(null); 
+    setInput(''); 
+    setIsDrawerOpen(false);
+    sessionStorage.removeItem('activeChat');
   };
 
   const handleLogout = async () => {
     setIsProfileOpen(false);
     if (supabase) await supabase.auth.signOut();
+    sessionStorage.removeItem('activeChat');
     window.location.reload();
   };
 
@@ -140,7 +147,6 @@ export default function ChatInterface() {
     }
   };
 
-  // WEB SPEECH API FOR MIC INPUT
   const toggleListening = () => {
     if (isListening) return;
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -149,7 +155,7 @@ export default function ChatInterface() {
       return;
     }
     const recognition = new SpeechRecognition();
-    recognition.lang = languageCodes[language] || 'en-IN';
+    recognition.lang = languageCodes[language] || 'hi-IN';
     recognition.interimResults = false;
     
     recognition.onstart = () => setIsListening(true);
@@ -162,13 +168,12 @@ export default function ChatInterface() {
     recognition.start();
   };
 
-  // TEXT TO SPEECH FUNCTION
   const speakText = (text) => {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       const plainText = text.replace(/<[^>]+>/g, '').replace(/[*#]/g, '');
       const utterance = new SpeechSynthesisUtterance(plainText);
-      utterance.lang = languageCodes[language] || 'en-IN';
+      utterance.lang = languageCodes[language] || 'hi-IN';
       window.speechSynthesis.speak(utterance);
     }
   };
@@ -207,7 +212,7 @@ export default function ChatInterface() {
         citations: data.citations || [],
         disclaimer: data.disclaimer || ''
       }]);
-      loadFullHistory(); 
+      await loadFullHistory(); 
     } catch (err) {
       setMessages(prev => [...prev, { sender: 'assistant', text: `**System Error:** ${err.message}` }]);
     } finally {
@@ -316,7 +321,6 @@ export default function ChatInterface() {
           </div>
           
           <div className="flex items-center gap-2 sm:gap-4">
-            {/* EXPANDED LANGUAGE DROPDOWN */}
             <select 
               value={language} 
               onChange={(e) => setLanguage(e.target.value)} 
@@ -412,7 +416,6 @@ export default function ChatInterface() {
           </div>
         )}
 
-        {/* INPUT BOX AREA WITH MIC AND FILE ATTACHMENT */}
         <div className="flex-shrink-0 w-full px-3 sm:px-6 py-3 bg-white/60 backdrop-blur-md border-t border-gray-200/50 flex justify-center z-30">
           <div className="w-full max-w-3xl bg-white/95 backdrop-blur-xl border border-gray-200 rounded-full shadow-2xl p-1.5 sm:p-2 flex items-center focus-within:border-purple-300 transition-all duration-300">
             <label className="cursor-pointer p-2 text-gray-500 hover:text-purple-600 transition-colors ml-1 rounded-full hover:bg-purple-50">
