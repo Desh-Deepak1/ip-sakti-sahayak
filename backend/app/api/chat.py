@@ -8,6 +8,9 @@ from app.api.deps import get_current_user
 from app.rag.retriever import retrieve_evidence
 from app.ai.gateway import process_llm_request
 
+# NEW: Bhashini translation function import karo
+from app.providers.bhashini import translate_with_bhashini
+
 router = APIRouter(prefix="/api/v1", tags=["Chat"])
 
 supabase: Client = create_client(
@@ -18,11 +21,13 @@ supabase: Client = create_client(
 class ChatRequest(BaseModel):
     query: str
     jurisdiction: Optional[str] = "INDIA"
+    language: Optional[str] = "English"
 
 @router.post("/chat")
 async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current_user)):
     try:
         user_query = request.query.strip()
+        requested_language = request.language
         
         # AGENT 1: Intent & Classification Router
         intent_system_prompt = (
@@ -44,10 +49,10 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
         citations = []
 
         if "GENERAL" in intent:
-            # Handle General Queries
+            # Generate English response first
             general_system_prompt = (
-                "You are IP-SAKTI Sahayak, an expert AI legal assistant for Intellectual Property and Ayurveda regulations. "
-                "Answer the casual greeting or general question politely and concisely. Remind them you are here for IP and Ayurveda legal queries."
+                "You are IP-SAKTI Sahayak, an expert AI legal assistant for Intellectual Property and Ayurveda. "
+                "Answer the casual greeting or general question politely and concisely in English. Remind them you are here for IP and Ayurveda legal queries."
             )
             llm_text = await process_llm_request(
                 task_type="rag_answer",
@@ -59,26 +64,26 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
             disclaimer = ""
 
         elif "NEEDS_CLASSIFICATION" in intent:
-            # Handle Missing Product Category (SIH Mandatory Feature)
+            # Missing Category prompt in English
             llm_text = (
                 "To give you the most accurate legal guidance, I need to understand your product better. "
                 "Ayurvedic IP laws change based on the category. Could you please clarify if your product is:\n\n"
-                "• **Classical Ayurvedic Medicine:** Formulated exactly as per ancient texts (e.g., Charaka Samhita).\n"
+                "• **Classical Ayurvedic Medicine:** Formulated exactly as per ancient texts.\n"
                 "• **Proprietary Ayurvedic Medicine:** A new combination of traditional herbs not mentioned in ancient texts.\n"
                 "• **Phytopharmaceutical:** A highly purified, modern drug derived from plants requiring clinical trials.\n"
                 "• **Cosmetic/Nutraceutical:** Meant for external application or dietary supplement.\n\n"
-                "Please reply with your product category so I can fetch the correct regulations from the Drugs & Cosmetics Act and Patents Act."
+                "Please reply with your product category so I can fetch the correct regulations."
             )
             score_data = {"score": 1.0, "rating": "System Request"}
             disclaimer = ""
 
         else:
-            # Handle LEGAL_READY (Full RAG Execution)
+            # Full RAG in English (Because LLM performs best in English for legal texts)
             raw_chunks = await retrieve_evidence(user_query)
             
             system_prompt = (
                 f"You are IP-SAKTI Sahayak, an expert AI legal assistant analyzing IP laws for the {request.jurisdiction} jurisdiction. "
-                "Analyze the user's query strictly based on the provided Context Documents. "
+                "Analyze the user's query strictly based on the provided Context Documents in English. "
                 "Structure your EXACT response using THESE EXACT bolded headings:\n"
                 "**Preliminary Assessment:**\n"
                 "**Reasons:**\n"
@@ -98,7 +103,6 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
             if "Error:" in llm_text:
                 raise Exception(llm_text)
 
-            # Extract Citations
             for chunk in raw_chunks:
                 payload = chunk.get("payload", {})
                 if payload:
@@ -110,10 +114,21 @@ async def chat_endpoint(request: ChatRequest, user_id: str = Depends(get_current
             if not citations:
                 citations = [{"title": "Indian Intellectual Property Portal", "type": "Official Registry", "url": "https://ipindia.gov.in"}]
 
-            unique_citations = list({c["title"]: c for c in citations}.values())
-            citations = unique_citations
+            citations = list({c["title"]: c for c in citations}.values())
             score_data = {"score": 0.95, "rating": "High Confidence"}
             disclaimer = "IP-SAKTI Sahayak provides legal information based on trained datasets, not professional legal advice."
+
+        # ==========================================
+        # BHASHINI TRANSLATION LAYER (Runs for ALL intents)
+        # ==========================================
+        if requested_language.upper() == "HINDI":
+            llm_text = await translate_with_bhashini(llm_text, source_lang="en", target_lang="hi")
+            if disclaimer:
+                disclaimer = await translate_with_bhashini(disclaimer, source_lang="en", target_lang="hi")
+        elif requested_language.upper() == "MARATHI":
+            llm_text = await translate_with_bhashini(llm_text, source_lang="en", target_lang="mr")
+            if disclaimer:
+                disclaimer = await translate_with_bhashini(disclaimer, source_lang="en", target_lang="mr")
 
         # Database Logging
         try:
